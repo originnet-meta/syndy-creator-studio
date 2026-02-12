@@ -26,6 +26,22 @@ extern const char *get_module_extension(void);
 
 obs_module_t *loadingModule = NULL;
 
+static obs_module_load_progress_callback_t module_load_progress_callback = NULL;
+static void *module_load_progress_param = NULL;
+
+static inline void report_module_load_progress(const struct obs_module_info2 *info,
+					       enum obs_module_load_progress progress,
+					       enum obs_module_load_reason reason)
+{
+	const char *module_name;
+
+	if (!module_load_progress_callback || !info)
+		return;
+
+	module_name = info->name ? info->name : info->bin_path;
+	module_load_progress_callback(module_load_progress_param, module_name, progress, reason);
+}
+
 static inline int req_func_not_found(const char *name, const char *path)
 {
 	blog(LOG_DEBUG,
@@ -442,6 +458,12 @@ void obs_add_disabled_module(const char *name)
 	da_push_back(obs->disabled_modules, &item);
 }
 
+void obs_set_module_load_progress_callback(obs_module_load_progress_callback_t callback, void *param)
+{
+	module_load_progress_callback = callback;
+	module_load_progress_param = param;
+}
+
 extern void get_plugin_info(const char *path, bool *is_obs_plugin);
 
 struct fail_info {
@@ -495,25 +517,31 @@ static void load_all_callback(void *param, const struct obs_module_info2 *info)
 	struct fail_info *fail_info = param;
 	obs_module_t *module;
 	obs_module_t *disabled_module;
+	enum obs_module_load_reason failure_reason = OBS_MODULE_LOAD_REASON_NONE;
 
 	bool is_obs_plugin;
+
+	report_module_load_progress(info, OBS_MODULE_LOAD_PROGRESS_BEGIN, OBS_MODULE_LOAD_REASON_NONE);
 
 	get_plugin_info(info->bin_path, &is_obs_plugin);
 
 	if (!is_obs_plugin) {
 		blog(LOG_WARNING, "Skipping module '%s', not an OBS plugin", info->bin_path);
+		report_module_load_progress(info, OBS_MODULE_LOAD_PROGRESS_SKIP, OBS_MODULE_LOAD_REASON_NOT_OBS_PLUGIN);
 		return;
 	}
 
 	if (!is_safe_module(info->name)) {
 		obs_create_disabled_module(&disabled_module, info->bin_path, info->data_path, OBS_MODULE_DISABLED_SAFE);
 		blog(LOG_WARNING, "Skipping module '%s', not on safe list", info->name);
+		report_module_load_progress(info, OBS_MODULE_LOAD_PROGRESS_SKIP, OBS_MODULE_LOAD_REASON_NOT_SAFE_MODULE);
 		return;
 	}
 
 	if (is_disabled_module(info->name)) {
 		obs_create_disabled_module(&disabled_module, info->bin_path, info->data_path, OBS_MODULE_DISABLED);
 		blog(LOG_WARNING, "Skipping module '%s', is disabled", info->name);
+		report_module_load_progress(info, OBS_MODULE_LOAD_PROGRESS_SKIP, OBS_MODULE_LOAD_REASON_DISABLED_MODULE);
 		return;
 	}
 
@@ -521,21 +549,26 @@ static void load_all_callback(void *param, const struct obs_module_info2 *info)
 	switch (code) {
 	case MODULE_MISSING_EXPORTS:
 		blog(LOG_DEBUG, "Failed to load module file '%s', not an OBS plugin", info->bin_path);
+		report_module_load_progress(info, OBS_MODULE_LOAD_PROGRESS_SKIP, OBS_MODULE_LOAD_REASON_MISSING_EXPORTS);
 		return;
 	case MODULE_FAILED_TO_OPEN:
 		blog(LOG_DEBUG, "Failed to load module file '%s', module failed to open", info->bin_path);
 		obs_create_disabled_module(&disabled_module, info->bin_path, info->data_path,
 					   OBS_MODULE_FAILED_TO_OPEN);
+		failure_reason = OBS_MODULE_LOAD_REASON_FAILED_TO_OPEN;
 		goto load_failure;
 	case MODULE_ERROR:
 		blog(LOG_DEBUG, "Failed to load module file '%s' (unknown error)", info->bin_path);
+		failure_reason = OBS_MODULE_LOAD_REASON_ERROR;
 		goto load_failure;
 	case MODULE_INCOMPATIBLE_VER:
 		blog(LOG_DEBUG, "Failed to load module file '%s', incompatible version", info->bin_path);
 		obs_create_disabled_module(&disabled_module, info->bin_path, info->data_path,
 					   OBS_MODULE_FAILED_TO_OPEN);
+		failure_reason = OBS_MODULE_LOAD_REASON_INCOMPATIBLE_VERSION;
 		goto load_failure;
 	case MODULE_HARDCODED_SKIP:
+		report_module_load_progress(info, OBS_MODULE_LOAD_PROGRESS_SKIP, OBS_MODULE_LOAD_REASON_HARDCODED_SKIP);
 		return;
 	}
 
@@ -543,12 +576,19 @@ static void load_all_callback(void *param, const struct obs_module_info2 *info)
 		free_module(module);
 		obs_create_disabled_module(&disabled_module, info->bin_path, info->data_path,
 					   OBS_MODULE_FAILED_TO_INITIALIZE);
+		report_module_load_progress(info, OBS_MODULE_LOAD_PROGRESS_FAILURE,
+					    OBS_MODULE_LOAD_REASON_FAILED_TO_INITIALIZE);
+		return;
 	}
+
+	report_module_load_progress(info, OBS_MODULE_LOAD_PROGRESS_SUCCESS, OBS_MODULE_LOAD_REASON_NONE);
 
 	UNUSED_PARAMETER(param);
 	return;
 
 load_failure:
+	report_module_load_progress(info, OBS_MODULE_LOAD_PROGRESS_FAILURE, failure_reason);
+
 	if (fail_info) {
 		dstr_cat(&fail_info->fail_modules, info->name);
 		dstr_cat(&fail_info->fail_modules, ";");

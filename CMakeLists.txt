@@ -32,6 +32,10 @@ add_subdirectory(plugins)
 
 add_subdirectory(test/test-input)
 
+if(BUILD_TESTS AND OS_WINDOWS)
+  add_subdirectory(test/win)
+endif()
+
 add_subdirectory(frontend)
 
 message_configuration()

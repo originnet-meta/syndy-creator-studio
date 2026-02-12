@@ -577,6 +577,32 @@ EXPORT void obs_add_core_module(const char *name);
 /** Automatically loads all modules from module paths (convenience function) */
 EXPORT void obs_load_all_modules(void);
 
+enum obs_module_load_progress {
+	OBS_MODULE_LOAD_PROGRESS_BEGIN,
+	OBS_MODULE_LOAD_PROGRESS_SKIP,
+	OBS_MODULE_LOAD_PROGRESS_FAILURE,
+	OBS_MODULE_LOAD_PROGRESS_SUCCESS,
+};
+
+enum obs_module_load_reason {
+	OBS_MODULE_LOAD_REASON_NONE,
+	OBS_MODULE_LOAD_REASON_NOT_OBS_PLUGIN,
+	OBS_MODULE_LOAD_REASON_NOT_SAFE_MODULE,
+	OBS_MODULE_LOAD_REASON_DISABLED_MODULE,
+	OBS_MODULE_LOAD_REASON_MISSING_EXPORTS,
+	OBS_MODULE_LOAD_REASON_FAILED_TO_OPEN,
+	OBS_MODULE_LOAD_REASON_ERROR,
+	OBS_MODULE_LOAD_REASON_INCOMPATIBLE_VERSION,
+	OBS_MODULE_LOAD_REASON_HARDCODED_SKIP,
+	OBS_MODULE_LOAD_REASON_FAILED_TO_INITIALIZE,
+};
+
+typedef void (*obs_module_load_progress_callback_t)(void *param, const char *module_name,
+						    enum obs_module_load_progress progress,
+						    enum obs_module_load_reason reason);
+
+EXPORT void obs_set_module_load_progress_callback(obs_module_load_progress_callback_t callback, void *param);
+
 struct obs_module_failure_info {
 	char **failed_modules;
 	size_t count;
