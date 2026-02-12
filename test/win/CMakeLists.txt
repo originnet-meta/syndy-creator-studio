@@ -76,3 +76,14 @@ add_dependencies(module-load-progress-test
   module-progress-missing-exports
   module-progress-not-plugin
 )
+
+add_executable(
+  startup-progress-model-test
+  startup-progress-model-test.cpp
+  ../../frontend/utility/StartupProgressModel.cpp
+)
+target_include_directories(startup-progress-model-test PRIVATE ${CMAKE_SOURCE_DIR}/frontend)
+set_target_properties(startup-progress-model-test PROPERTIES
+  FOLDER "tests and examples"
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/libobs/$<CONFIG>"
+)

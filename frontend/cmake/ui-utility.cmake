@@ -57,6 +57,8 @@ target_sources(
     utility/SettingsEventFilter.hpp
     utility/SimpleOutput.cpp
     utility/SimpleOutput.hpp
+    utility/StartupProgressModel.cpp
+    utility/StartupProgressModel.hpp
     utility/StartMultiTrackVideoStreamingGuard.hpp
     utility/SurfaceEventFilter.hpp
     utility/ThumbnailManager.cpp

@@ -1057,6 +1057,7 @@ void OBSBasic::OBSInit()
 
 	if (!InitService())
 		throw "Failed to initialize service";
+	App()->GetStartupProgressModel().SetStage(OBS::StartupProgressStage::ServiceInitialized);
 
 	ResetOutputs();
 	CreateHotkeys();
@@ -1123,6 +1124,8 @@ void OBSBasic::OBSInit()
 			disableSaving++;
 		}
 	}
+
+	App()->GetStartupProgressModel().SetStage(OBS::StartupProgressStage::SceneCollectionLoaded);
 
 	loaded = true;
 
@@ -1339,6 +1342,7 @@ void OBSBasic::OBSInit()
 	}
 
 	UpdatePreviewProgramIndicators();
+	App()->GetStartupProgressModel().SetStage(OBS::StartupProgressStage::UiReady);
 	OnFirstLoad();
 
 	if (!hideWindowOnStart)
@@ -1365,6 +1369,7 @@ void OBSBasic::OBSInit()
 void OBSBasic::OnFirstLoad()
 {
 	OnEvent(OBS_FRONTEND_EVENT_FINISHED_LOADING);
+	App()->GetStartupProgressModel().SetStage(OBS::StartupProgressStage::Finished);
 
 #ifdef WHATSNEW_ENABLED
 	/* Attempt to load init screen if available */

@@ -19,6 +19,7 @@
 
 #include <utility/OBSTheme.hpp>
 #include <utility/NativeEventFilter.hpp>
+#include <utility/StartupProgressModel.hpp>
 #include <widgets/OBSMainWindow.hpp>
 
 #include <obs-frontend-api.h>
@@ -90,6 +91,7 @@ private:
 	std::deque<obs_frontend_translate_ui_cb> translatorHooks;
 
 	std::unique_ptr<OBS::PluginManager> pluginManager_;
+	OBS::StartupProgressModel startupProgressModel_;
 
 	bool UpdatePre22MultiviewLayout(const char *layout);
 
@@ -221,6 +223,9 @@ public:
 #endif
 
 	void loadAppModules(struct obs_module_failure_info &mfi);
+
+	inline OBS::StartupProgressModel &GetStartupProgressModel() { return startupProgressModel_; }
+	inline const OBS::StartupProgressModel &GetStartupProgressModel() const { return startupProgressModel_; }
 
 	// Plugin Manager Accessors
 	void pluginManagerOpenDialog();
