@@ -15,6 +15,13 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ******************************************************************************/
 
+/******************************************************************************
+    Modifications Copyright (C) 2026 Uniflow, Inc.
+    Author: Kim Taehyung <gaiaengine@gmail.com>
+    Modified: 2026-02-12
+    Notes: Changes for Syndy Creator Studio.
+******************************************************************************/
+
 #include "OBSApp.hpp"
 
 #include <components/Multiview.hpp>
@@ -154,23 +161,39 @@ void CountModulesCallback(void *param, const struct obs_module_info2 *info)
 void StartupModuleProgressCallback(void *param, const char *module_name, enum obs_module_load_progress progress,
 				   enum obs_module_load_reason reason)
 {
-	OBS::StartupProgressModel *model = static_cast<OBS::StartupProgressModel *>(param);
-
-	if (!model)
+	OBSApp *app = static_cast<OBSApp *>(param);
+	if (!app)
 		return;
 
-	switch (progress) {
-	case OBS_MODULE_LOAD_PROGRESS_BEGIN:
-		model->MarkModuleStarted(module_name ? module_name : "");
-		break;
-	case OBS_MODULE_LOAD_PROGRESS_SKIP:
-	case OBS_MODULE_LOAD_PROGRESS_FAILURE:
-	case OBS_MODULE_LOAD_PROGRESS_SUCCESS:
-		model->MarkModuleFinished(module_name ? module_name : "");
-		break;
+	app->UpdateStartupModuleProgress(module_name, progress, reason);
+}
+
+QString ModuleLoadReasonText(enum obs_module_load_reason reason)
+{
+	switch (reason) {
+	case OBS_MODULE_LOAD_REASON_NONE:
+		return QString();
+	case OBS_MODULE_LOAD_REASON_NOT_OBS_PLUGIN:
+		return QTStr("Startup.Splash.Reason.NotOBSPlugin");
+	case OBS_MODULE_LOAD_REASON_NOT_SAFE_MODULE:
+		return QTStr("Startup.Splash.Reason.NotSafeModule");
+	case OBS_MODULE_LOAD_REASON_DISABLED_MODULE:
+		return QTStr("Startup.Splash.Reason.DisabledModule");
+	case OBS_MODULE_LOAD_REASON_MISSING_EXPORTS:
+		return QTStr("Startup.Splash.Reason.MissingExports");
+	case OBS_MODULE_LOAD_REASON_FAILED_TO_OPEN:
+		return QTStr("Startup.Splash.Reason.FailedToOpen");
+	case OBS_MODULE_LOAD_REASON_ERROR:
+		return QTStr("Startup.Splash.Reason.GenericError");
+	case OBS_MODULE_LOAD_REASON_INCOMPATIBLE_VERSION:
+		return QTStr("Startup.Splash.Reason.IncompatibleVersion");
+	case OBS_MODULE_LOAD_REASON_HARDCODED_SKIP:
+		return QTStr("Startup.Splash.Reason.HardcodedSkip");
+	case OBS_MODULE_LOAD_REASON_FAILED_TO_INITIALIZE:
+		return QTStr("Startup.Splash.Reason.FailedToInitialize");
 	}
 
-	UNUSED_PARAMETER(reason);
+	return QTStr("Startup.Splash.Reason.Unknown");
 }
 
 QAccessibleInterface *alignmentSelectorFactory(const QString &classname, QObject *object)
@@ -332,6 +355,7 @@ bool OBSApp::InitGlobalConfigDefaults()
 	config_set_default_int(appConfig, "General", "InfoIncrement", -1);
 	config_set_default_string(appConfig, "General", "ProcessPriority", "Normal");
 	config_set_default_bool(appConfig, "General", "EnableAutoUpdates", true);
+	config_set_default_bool(appConfig, "General", "EnableStartupSplash", true);
 
 #if _WIN32
 	config_set_default_string(appConfig, "Video", "Renderer", "Direct3D 11");
@@ -1133,7 +1157,9 @@ void OBSApp::AppInit()
 	if (!MakeUserProfileDirs())
 		throw "Failed to create profile directories";
 
-	startupProgressModel_.SetStage(OBS::StartupProgressStage::AppInitialized);
+	SetStartupProgressStage(OBS::StartupProgressStage::AppInitialized,
+				QTStr("Startup.Splash.Status.InitializingApplication"),
+				QTStr("Startup.Splash.Step.AppInit"));
 }
 
 void OBSApp::checkForUncleanShutdown()
@@ -1268,7 +1294,9 @@ bool OBSApp::OBSInit()
 		return false;
 
 	libobs_initialized = true;
-	startupProgressModel_.SetStage(OBS::StartupProgressStage::LibobsInitialized);
+	SetStartupProgressStage(OBS::StartupProgressStage::LibobsInitialized,
+				QTStr("Startup.Splash.Status.InitializingOBSCore"),
+				QTStr("Startup.Splash.Step.OBSInit"));
 
 	obs_set_ui_task_handler(ui_task_handler);
 
@@ -2019,21 +2047,67 @@ void OBSApp::addLogLine(int logLevel, const QString &message)
 	emit logLineAdded(logLevel, message);
 }
 
+void OBSApp::SetStartupProgressStage(OBS::StartupProgressStage stage, const QString &statusText,
+				     const QString &stepText)
+{
+	startupProgressModel_.SetStage(stage);
+	emit startupProgressUpdated(statusText, QString::fromUtf8(startupProgressModel_.CurrentModuleName().c_str()),
+				    startupProgressModel_.Percent(), stepText);
+}
+
+void OBSApp::UpdateStartupModuleProgress(const char *moduleName, enum obs_module_load_progress progress,
+					 enum obs_module_load_reason reason)
+{
+	const QString moduleText = moduleName ? moduleName : "";
+	const QByteArray moduleUtf8 = moduleText.toUtf8();
+	QString statusText;
+
+	switch (progress) {
+	case OBS_MODULE_LOAD_PROGRESS_BEGIN:
+		startupProgressModel_.MarkModuleStarted(moduleUtf8.constData());
+		statusText = QTStr("Startup.Splash.Status.LoadingModule");
+		break;
+	case OBS_MODULE_LOAD_PROGRESS_SUCCESS:
+		startupProgressModel_.MarkModuleFinished(moduleUtf8.constData());
+		statusText = QTStr("Startup.Splash.Status.LoadedModule");
+		break;
+	case OBS_MODULE_LOAD_PROGRESS_SKIP:
+		startupProgressModel_.MarkModuleFinished(moduleUtf8.constData());
+		statusText = QTStr("Startup.Splash.Status.SkippedModule");
+		break;
+	case OBS_MODULE_LOAD_PROGRESS_FAILURE:
+		startupProgressModel_.MarkModuleFinished(moduleUtf8.constData());
+		statusText = QTStr("Startup.Splash.Status.FailedModule");
+		break;
+	}
+
+	const QString reasonText = ModuleLoadReasonText(reason);
+	if (!reasonText.isEmpty() && progress != OBS_MODULE_LOAD_PROGRESS_BEGIN)
+		statusText += QString(" (%1)").arg(reasonText);
+
+	emit startupProgressUpdated(statusText, moduleText, startupProgressModel_.Percent(),
+				    QTStr("Startup.Splash.Step.ModuleLoad"));
+}
+
 void OBSApp::loadAppModules(struct obs_module_failure_info &mfi)
 {
 	size_t moduleCount = 0;
 
-	startupProgressModel_.SetStage(OBS::StartupProgressStage::ModuleDiscovery);
+	SetStartupProgressStage(OBS::StartupProgressStage::ModuleDiscovery,
+				QTStr("Startup.Splash.Status.DiscoveringModules"),
+				QTStr("Startup.Splash.Step.ModuleScan"));
 	obs_find_modules2(CountModulesCallback, &moduleCount);
 	startupProgressModel_.SetModuleCount(moduleCount);
-	startupProgressModel_.SetStage(OBS::StartupProgressStage::ModuleLoading);
+	SetStartupProgressStage(OBS::StartupProgressStage::ModuleLoading, QTStr("Startup.Splash.Status.LoadingModules"),
+				QTStr("Startup.Splash.Step.ModuleLoad"));
 
 	pluginManager_->preLoad();
 	blog(LOG_INFO, "---------------------------------");
-	obs_set_module_load_progress_callback(StartupModuleProgressCallback, &startupProgressModel_);
+	obs_set_module_load_progress_callback(StartupModuleProgressCallback, this);
 	obs_load_all_modules2(&mfi);
 	obs_set_module_load_progress_callback(nullptr, nullptr);
-	startupProgressModel_.SetStage(OBS::StartupProgressStage::ModulesLoaded);
+	SetStartupProgressStage(OBS::StartupProgressStage::ModulesLoaded, QTStr("Startup.Splash.Status.ModulesLoaded"),
+				QTStr("Startup.Splash.Step.ModuleLoad"));
 	blog(LOG_INFO, "---------------------------------");
 	obs_log_loaded_modules();
 	blog(LOG_INFO, "---------------------------------");

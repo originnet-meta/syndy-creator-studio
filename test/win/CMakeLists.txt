@@ -1,3 +1,12 @@
+#[[
+/******************************************************************************
+    Modifications Copyright (C) 2026 Uniflow, Inc.
+    Author: Kim Taehyung <gaiaengine@gmail.com>
+    Modified: 2026-02-12
+    Notes: Changes for Syndy Creator Studio.
+******************************************************************************/
+]]
+
 project(win-test)
 
 option(ENABLE_WIN_TEST_SAMPLE "Build legacy Win32 rendering sample" OFF)
@@ -84,6 +93,41 @@ add_executable(
 )
 target_include_directories(startup-progress-model-test PRIVATE ${CMAKE_SOURCE_DIR}/frontend)
 set_target_properties(startup-progress-model-test PROPERTIES
+  FOLDER "tests and examples"
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/libobs/$<CONFIG>"
+)
+
+add_executable(
+  startup-progress-mapping-test
+  startup-progress-mapping-test.cpp
+  ../../frontend/utility/StartupProgressModel.cpp
+)
+target_include_directories(startup-progress-mapping-test PRIVATE ${CMAKE_SOURCE_DIR}/frontend)
+set_target_properties(startup-progress-mapping-test PROPERTIES
+  FOLDER "tests and examples"
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/libobs/$<CONFIG>"
+)
+
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
+
+add_executable(
+  startup-splash-widget-test
+  startup-splash-widget-test.cpp
+  ../../frontend/widgets/StartupSplashWidget.cpp
+)
+target_include_directories(startup-splash-widget-test PRIVATE ${CMAKE_SOURCE_DIR}/frontend)
+target_link_libraries(startup-splash-widget-test PRIVATE Qt::Widgets)
+set_target_properties(startup-splash-widget-test PROPERTIES
+  FOLDER "tests and examples"
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/libobs/$<CONFIG>"
+)
+
+add_executable(
+  startup-splash-guard-test
+  startup-splash-guard-test.cpp
+)
+target_include_directories(startup-splash-guard-test PRIVATE ${CMAKE_SOURCE_DIR}/frontend)
+set_target_properties(startup-splash-guard-test PROPERTIES
   FOLDER "tests and examples"
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/libobs/$<CONFIG>"
 )
