@@ -49,7 +49,6 @@ target_sources(
     utility/RemuxQueueModel.hpp
     utility/RemuxWorker.cpp
     utility/RemuxWorker.hpp
-    utility/ResizeSignaler.hpp
     utility/SceneRenameDelegate.cpp
     utility/SceneRenameDelegate.hpp
     utility/ScreenshotObj.cpp
@@ -61,8 +60,6 @@ target_sources(
     utility/StartupProgressModel.hpp
     utility/StartMultiTrackVideoStreamingGuard.hpp
     utility/SurfaceEventFilter.hpp
-    utility/ThumbnailManager.cpp
-    utility/ThumbnailManager.hpp
     utility/VCamConfig.hpp
     utility/audio-encoders.cpp
     utility/audio-encoders.hpp

@@ -243,8 +243,6 @@ OBSBasic::OBSBasic(QWidget *parent) : OBSMainWindow(parent), undo_s(ui), ui(new 
 
 	api = InitializeAPIInterface(this);
 
-	thumbnailManager = new ThumbnailManager(this);
-
 	ui->setupUi(this);
 	ui->previewDisabledWidget->setVisible(false);
 
@@ -480,7 +478,7 @@ OBSBasic::OBSBasic(QWidget *parent) : OBSMainWindow(parent), undo_s(ui), ui(new 
 	ui->actionCheckForUpdates->setMenuRole(QAction::AboutQtRole);
 	ui->action_Settings->setMenuRole(QAction::PreferencesRole);
 	ui->actionShowMacPermissions->setMenuRole(QAction::ApplicationSpecificRole);
-	ui->actionE_xit->setMenuRole(QAction::QuitRole);
+	delete ui->actionE_xit;
 #else
 	renameScene->setShortcut({Qt::Key_F2});
 	renameSource->setShortcut({Qt::Key_F2});
@@ -573,7 +571,9 @@ OBSBasic::OBSBasic(QWidget *parent) : OBSMainWindow(parent), undo_s(ui), ui(new 
 		[]() { OBSProjector::UpdateMultiviewProjectors(); });
 
 	connect(App(), &OBSApp::StyleChanged, this, [this]() { OnEvent(OBS_FRONTEND_EVENT_THEME_CHANGED); });
+#ifndef __APPLE__
 	connect(App(), &OBSApp::aboutToQuit, this, &OBSBasic::closeWindow);
+#endif
 
 	QActionGroup *actionGroup = new QActionGroup(this);
 	actionGroup->addAction(ui->actionSceneListMode);
@@ -1401,7 +1401,9 @@ void OBSBasic::applicationShutdown() noexcept
 {
 	/* clear out UI event queue */
 	QApplication::sendPostedEvents(nullptr);
+#ifndef __APPLE_
 	QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+#endif
 
 	if (updateCheckThread && updateCheckThread->isRunning())
 		updateCheckThread->wait();
@@ -1981,6 +1983,13 @@ void OBSBasic::closeWindow()
 
 #ifdef BROWSER_AVAILABLE
 	ClearExtraBrowserDocks();
+
+#ifdef YOUTUBE_ENABLED
+	if (youtubeAppDock) {
+		RemoveDockWidget(youtubeAppDock->objectName());
+		youtubeAppDock = nullptr;
+	}
+#endif
 #endif
 
 	OnEvent(OBS_FRONTEND_EVENT_SCRIPTING_SHUTDOWN);
@@ -1998,11 +2007,16 @@ void OBSBasic::closeWindow()
 	api = nullptr;
 
 	applicationShutdown();
+
+#ifndef __APPLE__
 	deleteLater();
 
 	emit mainWindowClosed();
 
 	QMetaObject::invokeMethod(App(), "quit", Qt::QueuedConnection);
+#else
+	QMetaObject::invokeMethod(App(), "quit", Qt::QueuedConnection);
+#endif
 }
 
 void OBSBasic::UpdateEditMenu()

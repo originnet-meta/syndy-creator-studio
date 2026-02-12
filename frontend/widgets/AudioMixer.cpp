@@ -179,10 +179,6 @@ AudioMixer::AudioMixer(QWidget *parent) : QFrame(parent)
 	toggleHiddenButton->setChecked(showHidden);
 	toggleHiddenButton->setText(QTStr("Basic.AudioMixer.HiddenTotal").arg(0));
 	toggleHiddenButton->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
-	QIcon hiddenIcon;
-	hiddenIcon.addFile(QString::fromUtf8(":/res/images/hidden.svg"), QSize(16, 16), QIcon::Mode::Normal,
-			   QIcon::State::Off);
-	toggleHiddenButton->setIcon(hiddenIcon);
 	idian::Utils::addClass(toggleHiddenButton, "toolbar-button");
 	idian::Utils::addClass(toggleHiddenButton, "toggle-hidden");
 
@@ -260,6 +256,7 @@ AudioMixer::AudioMixer(QWidget *parent) : QFrame(parent)
 
 	updateShowToolbar();
 	updatePreviewSources();
+	updatePreviewHandlers();
 	updateGlobalSources();
 
 	reloadVolumeControls();
@@ -413,6 +410,10 @@ void AudioMixer::updatePreviewSources()
 		}
 
 		auto getPreviewSources = [this](obs_scene_t *, obs_sceneitem_t *item) {
+			if (!obs_sceneitem_visible(item)) {
+				return true;
+			}
+
 			obs_source_t *source = obs_sceneitem_get_source(item);
 			if (!source) {
 				return true;
@@ -882,6 +883,7 @@ void AudioMixer::handleFrontendEvent(obs_frontend_event event)
 	case OBS_FRONTEND_EVENT_STUDIO_MODE_ENABLED:
 	case OBS_FRONTEND_EVENT_STUDIO_MODE_DISABLED:
 		updatePreviewSources();
+		updatePreviewHandlers();
 		queueLayoutUpdate();
 		break;
 	case OBS_FRONTEND_EVENT_EXIT:
@@ -889,6 +891,24 @@ void AudioMixer::handleFrontendEvent(obs_frontend_event event)
 		break;
 	default:
 		break;
+	}
+}
+
+void AudioMixer::updatePreviewHandlers()
+{
+	previewSignals.clear();
+
+	bool isStudioMode = obs_frontend_preview_program_mode_active();
+	if (isStudioMode) {
+		OBSSourceAutoRelease previewSource = obs_frontend_get_current_preview_scene();
+		if (!previewSource) {
+			return;
+		}
+
+		previewSignals.reserve(1);
+
+		previewSignals.emplace_back(obs_source_get_signal_handler(previewSource), "item_visible",
+					    AudioMixer::obsSceneItemVisibleChange, this);
 	}
 }
 
@@ -1028,4 +1048,28 @@ void AudioMixer::obsSourceRemove(void *data, calldata_t *params)
 void AudioMixer::obsSourceRename(void *data, calldata_t *)
 {
 	QMetaObject::invokeMethod(static_cast<AudioMixer *>(data), "queueLayoutUpdate", Qt::QueuedConnection);
+}
+
+void AudioMixer::obsSceneItemVisibleChange(void *data, calldata_t *params)
+{
+	obs_sceneitem_t *sceneItem = static_cast<obs_sceneitem_t *>(calldata_ptr(params, "item"));
+	if (!sceneItem) {
+		return;
+	}
+
+	obs_source_t *source = obs_sceneitem_get_source(sceneItem);
+	if (!source) {
+		return;
+	}
+
+	uint32_t flags = obs_source_get_output_flags(source);
+
+	if (flags & OBS_SOURCE_AUDIO) {
+		QMetaObject::invokeMethod(static_cast<AudioMixer *>(data), "updatePreviewSources",
+					  Qt::QueuedConnection);
+
+		auto uuidPointer = obs_source_get_uuid(source);
+		QMetaObject::invokeMethod(static_cast<AudioMixer *>(data), "updateControlVisibility",
+					  Qt::QueuedConnection, Q_ARG(QString, QString::fromUtf8(uuidPointer)));
+	}
 }

@@ -52,8 +52,6 @@ VolumeControl::VolumeControl(obs_source_t *source, QWidget *parent, bool vertica
 	  contextMenu(nullptr),
 	  QFrame(parent)
 {
-	setAttribute(Qt::WA_OpaquePaintEvent, true);
-
 	utils = std::make_unique<idian::Utils>(this);
 
 	uuid = obs_source_get_uuid(source);
@@ -491,6 +489,10 @@ void VolumeControl::renameSource()
 			continue;
 		}
 
+		if (name == prevName) {
+			return;
+		}
+
 		OBSSourceAutoRelease sourceTest = obs_get_source_by_name(name.c_str());
 
 		if (sourceTest) {
@@ -579,7 +581,9 @@ void VolumeControl::updateCategoryLabel()
 	categoryLabel->setText(labelText);
 
 	utils->polishChildren();
-	volumeMeter->updateBackgroundCache();
+
+	bool forceUpdate = true;
+	volumeMeter->updateBackgroundCache(forceUpdate);
 }
 
 void VolumeControl::updateDecayRate()
@@ -691,7 +695,6 @@ void VolumeControl::updateMixerState()
 	bool isActive = obs_source_active(source) && obs_source_audio_active(source);
 
 	mixerStatus().set(VolumeControl::MixerStatus::Active, isActive);
-	setUseDisabledColors(!isActive);
 	mixerStatus().set(VolumeControl::MixerStatus::Unassigned, unassigned);
 
 	QSignalBlocker blockMute(muteButton);
@@ -702,6 +705,7 @@ void VolumeControl::updateMixerState()
 	bool showAsUnassigned = !muted && unassigned;
 
 	volumeMeter->setMuted((showAsMuted || showAsUnassigned) && !showAsMonitored);
+	setUseDisabledColors(showAsMuted);
 
 	// Qt doesn't support overriding the QPushButton icon using pseudo state selectors like :checked
 	// in QSS so we set a checked class selector on the button to be used instead.
