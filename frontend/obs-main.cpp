@@ -15,6 +15,13 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ******************************************************************************/
 
+/******************************************************************************
+    Modifications Copyright (C) 2026 Uniflow, Inc.
+    Author: Kim Taehyung <gaiaengine@gmail.com>
+    Modified: 2026-02-12
+    Notes: Changes for Syndy Creator Studio.
+******************************************************************************/
+
 #include <OBSApp.hpp>
 
 #include <components/VolumeAccessibleInterface.hpp>
@@ -24,6 +31,8 @@
 #include <utility/BaseLexer.hpp>
 #include <utility/OBSTranslator.hpp>
 #include <utility/platform.hpp>
+#include <utility/StartupSplashGuard.hpp>
+#include <widgets/StartupSplashWidget.hpp>
 
 #include <qt-wrappers.hpp>
 #include <util/platform.h>
@@ -34,11 +43,13 @@
 #endif
 
 #include <QFontDatabase>
+#include <QEventLoop>
 #include <QProcess>
 #include <QPushButton>
 #include <curl/curl.h>
 
 #include <fstream>
+#include <cstring>
 #include <iostream>
 #include <sstream>
 #ifdef _WIN32
@@ -74,6 +85,7 @@ bool opt_allow_opengl = false;
 bool opt_always_on_top = false;
 bool opt_disable_updater = false;
 bool opt_disable_missing_files_check = false;
+bool opt_disable_startup_splash = false;
 string opt_starting_collection;
 string opt_starting_profile;
 string opt_starting_scene;
@@ -489,6 +501,34 @@ QAccessibleInterface *accessibleFactory(const QString &classname, QObject *objec
 }
 
 static const char *run_program_init = "run_program_init";
+
+static bool IsStartupSplashEnabledInConfig()
+{
+	BPtr<char> configPath = GetAppConfigPathPtr("obs-studio/global.ini");
+	if (!configPath)
+		return true;
+
+	config_t *globalConfig = nullptr;
+	if (config_open(&globalConfig, configPath, CONFIG_OPEN_EXISTING) != CONFIG_SUCCESS || !globalConfig)
+		return true;
+
+	bool startupSplashEnabled = true;
+	if (config_has_user_value(globalConfig, "General", "EnableStartupSplash"))
+		startupSplashEnabled = config_get_bool(globalConfig, "General", "EnableStartupSplash");
+
+	config_close(globalConfig);
+	return startupSplashEnabled;
+}
+
+static QString StartupSplashText(const char *key, const char *fallback)
+{
+	const char *localized = App()->GetString(key);
+	if (strcmp(localized, key) == 0)
+		localized = fallback;
+
+	return QString::fromUtf8(localized);
+}
+
 static int run_program(fstream &logFile, int argc, char *argv[])
 {
 	int ret = -1;
@@ -536,7 +576,43 @@ static int run_program(fstream &logFile, int argc, char *argv[])
 	qputenv("QT_NO_SUBTRACTOPAQUESIBLINGS", "1");
 
 	OBSApp program(argc, argv, profilerNameStore.get());
+	const bool startupSplashEnabledByConfig = IsStartupSplashEnabledInConfig();
+	const bool startupSplashEnabled =
+		OBS::IsStartupSplashEnabled(opt_disable_startup_splash, startupSplashEnabledByConfig);
+	if (opt_disable_startup_splash)
+		blog(LOG_INFO, "Startup splash disabled via command line option.");
+	else if (!startupSplashEnabledByConfig)
+		blog(LOG_INFO, "Startup splash disabled via configuration.");
+	else
+		blog(LOG_INFO, "Startup splash enabled.");
+	auto splash_deleter = [](StartupSplashWidget *splash) {
+		if (!splash)
+			return;
+
+		splash->close();
+		delete splash;
+	};
+	std::unique_ptr<StartupSplashWidget, decltype(splash_deleter)> splash(nullptr, splash_deleter);
+	if (startupSplashEnabled)
+		splash.reset(new StartupSplashWidget());
+
 	try {
+		if (splash) {
+			QObject::connect(&program, &OBSApp::startupProgressUpdated, splash.get(),
+					 [splash_widget = splash.get()](const QString &statusText,
+									const QString &moduleName, int percent,
+									const QString &stepText) {
+						 splash_widget->UpdateState(statusText, moduleName, percent, stepText);
+						 splash_widget->repaint();
+						 QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+					 });
+			splash->UpdateState(StartupSplashText("Startup.Splash.Status.StartingApplication",
+							      "Starting application"),
+					    QString(), 0, StartupSplashText("Startup.Splash.Step.Boot", "Boot"));
+			splash->show();
+			QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+		}
+
 		QAccessible::installFactory(accessibleFactory);
 		QFontDatabase::addApplicationFont(":/fonts/OpenSans-Regular.ttf");
 		QFontDatabase::addApplicationFont(":/fonts/OpenSans-Bold.ttf");
@@ -604,7 +680,8 @@ static int run_program(fstream &logFile, int argc, char *argv[])
 
 #if !defined(_WIN32) && !defined(__APPLE__) && !defined(__FreeBSD__)
 		// Mounted by termina during chromeOS linux container startup
-		// https://chromium.googlesource.com/chromiumos/overlays/board-overlays/+/master/project-termina/chromeos-base/termina-lxd-scripts/files/lxd_setup.sh
+		// https://chromium.googlesource.com/chromiumos/overlays/board-overlays/
+		// +/master/project-termina/chromeos-base/termina-lxd-scripts/files/lxd_setup.sh
 		os_dir_t *crosDir = os_opendir("/opt/google/cros-containers");
 		if (crosDir) {
 			QMessageBox::StandardButtons buttons(QMessageBox::Ok);
@@ -685,6 +762,9 @@ static int run_program(fstream &logFile, int argc, char *argv[])
 
 		if (!program.OBSInit())
 			return 0;
+
+		if (splash)
+			splash.reset();
 
 		prof.Stop();
 
@@ -989,6 +1069,9 @@ int main(int argc, char *argv[])
 		} else if (arg_is(argv[i], "--disable-missing-files-check", nullptr)) {
 			opt_disable_missing_files_check = true;
 
+		} else if (arg_is(argv[i], "--disable-startup-splash", nullptr)) {
+			opt_disable_startup_splash = true;
+
 		} else if (arg_is(argv[i], "--steam", nullptr)) {
 			steam = true;
 
@@ -1009,13 +1092,16 @@ int main(int argc, char *argv[])
 				"--portable, -p: Use portable mode.\n"
 #endif
 				"--multi, -m: Don't warn when launching multiple instances.\n\n"
-				"--safe-mode: Run in Safe Mode (disables third-party plugins, scripting, and WebSockets).\n"
+				"--safe-mode: Run in Safe Mode (disables third-party plugins,\n"
+				"scripting, and WebSockets).\n"
 				"--only-bundled-plugins: Only load included (first-party) plugins\n"
 				"--verbose: Make log more verbose.\n"
 				"--always-on-top: Start in 'always on top' mode.\n\n"
 				"--unfiltered_log: Make log unfiltered.\n\n"
 				"--disable-updater: Disable built-in updater (Windows/Mac only)\n\n"
-				"--disable-missing-files-check: Disable the missing files dialog which can appear on startup.\n\n";
+				"--disable-missing-files-check: Disable the missing files dialog\n"
+				"which can appear on startup.\n"
+				"--disable-startup-splash: Disable startup splash and progress UI.\n\n";
 
 #ifdef _WIN32
 			MessageBoxA(NULL, help.c_str(), "Help", MB_OK | MB_ICONASTERISK);

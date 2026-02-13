@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
+# /******************************************************************************
+#     Modifications Copyright (C) 2026 Uniflow, Inc.
+#     Author: Kim Taehyung <gaiaengine@gmail.com>
+#     Modified: 2026-02-12
+#     Notes: Changes for Syndy Creator Studio.
+# ******************************************************************************/
+#
 # OBS Studio documentation build configuration file, created by
 # sphinx-quickstart on Wed Oct 25 00:03:21 2017.
 #
@@ -17,6 +24,10 @@
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
+import importlib.util
+
+has_sphinx_rtd_theme = importlib.util.find_spec("sphinx_rtd_theme") is not None
+
 # import os
 # import sys
 # sys.path.insert(0, os.path.abspath('.'))
@@ -36,10 +47,12 @@ extensions = [
     "sphinx.ext.coverage",
     "sphinx.ext.viewcode",
     "sphinx.ext.napoleon",
-    "sphinx_rtd_theme",
     "sphinx.ext.autosectionlabel",
     "sphinx.ext.extlinks",
 ]
+
+if has_sphinx_rtd_theme:
+    extensions.append("sphinx_rtd_theme")
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
@@ -74,7 +87,7 @@ release = '27.2.0'
 #
 # This is also used if you do content translation via gettext catalogs.
 # Usually you set "language" from the command line for these cases.
-language = None
+language = "en"
 
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
@@ -93,16 +106,21 @@ todo_include_todos = False
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = 'sphinx_rtd_theme'
-html_theme_options = {
-    "logo_only": True,
-    "navigation_depth": 5,
-    'prev_next_buttons_location': 'both',
-    'vcs_pageview_mode': 'edit',
-    'style_external_links': True,
-    'style_nav_header_background': '#202C73',
-    'collapse_navigation': False
-}
+if has_sphinx_rtd_theme:
+    html_theme = "sphinx_rtd_theme"
+    html_theme_options = {
+        "logo_only": True,
+        "navigation_depth": 5,
+        "prev_next_buttons_location": "both",
+        "vcs_pageview_mode": "edit",
+        "style_external_links": True,
+        "style_nav_header_background": "#202C73",
+        "collapse_navigation": False,
+    }
+else:
+    # Fallback for environments where optional theme dependency is unavailable.
+    html_theme = "alabaster"
+    html_theme_options = {}
 
 html_logo = 'logo.svg'
 

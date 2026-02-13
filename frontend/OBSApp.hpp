@@ -15,6 +15,13 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ******************************************************************************/
 
+/******************************************************************************
+    Modifications Copyright (C) 2026 Uniflow, Inc.
+    Author: Kim Taehyung <gaiaengine@gmail.com>
+    Modified: 2026-02-12
+    Notes: Changes for Syndy Creator Studio.
+******************************************************************************/
+
 #pragma once
 
 #include <utility/OBSTheme.hpp>
@@ -23,6 +30,7 @@
 #include <widgets/OBSMainWindow.hpp>
 
 #include <obs-frontend-api.h>
+#include <obs.h>
 #include <util/platform.h>
 #include <util/profiler.hpp>
 #include <util/util.hpp>
@@ -230,6 +238,10 @@ public:
 #endif
 
 	void loadAppModules(struct obs_module_failure_info &mfi);
+	void SetStartupProgressStage(OBS::StartupProgressStage stage, const QString &statusText,
+				     const QString &stepText);
+	void UpdateStartupModuleProgress(const char *moduleName, enum obs_module_load_progress progress,
+					 enum obs_module_load_reason reason);
 
 	inline OBS::StartupProgressModel &GetStartupProgressModel() { return startupProgressModel_; }
 	inline const OBS::StartupProgressModel &GetStartupProgressModel() const { return startupProgressModel_; }
@@ -247,6 +259,8 @@ public slots:
 signals:
 	void logLineAdded(int logLevel, const QString &message);
 	void StyleChanged();
+	void startupProgressUpdated(const QString &statusText, const QString &moduleName, int percent,
+				    const QString &stepText);
 
 	void logUploadFinished(OBS::LogFileType, const QString &fileUrl);
 	void logUploadFailed(OBS::LogFileType, const QString &errorMessage);

@@ -1,3 +1,11 @@
+..
+   /******************************************************************************
+       Modifications Copyright (C) 2026 Uniflow, Inc.
+       Author: Kim Taehyung <gaiaengine@gmail.com>
+       Modified: 2026-02-12
+       Notes: Changes for Syndy Creator Studio.
+   ******************************************************************************/
+
 Source API Reference (obs_source_t)
 ===================================
 
@@ -1127,7 +1135,7 @@ General Source Functions
    :return: The source's type identifier string. If the source is versioned,
             "_vN" is appended at the end, where "N" is the source's version.
 
- ---------------------
+---------------------
 
 .. function:: const char *obs_source_get_unversioned_id(const obs_source_t *source)
 

@@ -17,6 +17,13 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ******************************************************************************/
 
+/******************************************************************************
+    Modifications Copyright (C) 2026 Uniflow, Inc.
+    Author: Kim Taehyung <gaiaengine@gmail.com>
+    Modified: 2026-02-12
+    Notes: Changes for Syndy Creator Studio.
+******************************************************************************/
+
 #include "OBSBasic.hpp"
 #include "ui-config.h"
 
@@ -24,7 +31,6 @@
 #include "OBSBasicControls.hpp"
 #include "OBSBasicStats.hpp"
 #include "plugin-manager/PluginManager.hpp"
-
 #include <obs-module.h>
 
 #ifdef YOUTUBE_ENABLED
@@ -1057,7 +1063,9 @@ void OBSBasic::OBSInit()
 
 	if (!InitService())
 		throw "Failed to initialize service";
-	App()->GetStartupProgressModel().SetStage(OBS::StartupProgressStage::ServiceInitialized);
+	App()->SetStartupProgressStage(OBS::StartupProgressStage::ServiceInitialized,
+				       QTStr("Startup.Splash.Status.InitializingServices"),
+				       QTStr("Startup.Splash.Step.Services"));
 
 	ResetOutputs();
 	CreateHotkeys();
@@ -1125,7 +1133,9 @@ void OBSBasic::OBSInit()
 		}
 	}
 
-	App()->GetStartupProgressModel().SetStage(OBS::StartupProgressStage::SceneCollectionLoaded);
+	App()->SetStartupProgressStage(OBS::StartupProgressStage::SceneCollectionLoaded,
+				       QTStr("Startup.Splash.Status.LoadingSceneCollection"),
+				       QTStr("Startup.Splash.Step.Scenes"));
 
 	loaded = true;
 
@@ -1342,7 +1352,9 @@ void OBSBasic::OBSInit()
 	}
 
 	UpdatePreviewProgramIndicators();
-	App()->GetStartupProgressModel().SetStage(OBS::StartupProgressStage::UiReady);
+	App()->SetStartupProgressStage(OBS::StartupProgressStage::UiReady,
+				       QTStr("Startup.Splash.Status.PreparingMainWindow"),
+				       QTStr("Startup.Splash.Step.UI"));
 	OnFirstLoad();
 
 	if (!hideWindowOnStart)
@@ -1369,7 +1381,9 @@ void OBSBasic::OBSInit()
 void OBSBasic::OnFirstLoad()
 {
 	OnEvent(OBS_FRONTEND_EVENT_FINISHED_LOADING);
-	App()->GetStartupProgressModel().SetStage(OBS::StartupProgressStage::Finished);
+	App()->SetStartupProgressStage(OBS::StartupProgressStage::Finished,
+				       QTStr("Startup.Splash.Status.StartupComplete"),
+				       QTStr("Startup.Splash.Step.Ready"));
 
 #ifdef WHATSNEW_ENABLED
 	/* Attempt to load init screen if available */
