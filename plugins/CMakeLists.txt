@@ -1,3 +1,12 @@
+#[[
+/******************************************************************************
+    Modifications Copyright (C) 2026 Uniflow, Inc.
+    Author: Kim Taehyung <gaiaengine@gmail.com>
+    Modified: 2026-02-12
+    Notes: Changes for Syndy Creator Studio.
+******************************************************************************/
+]]
+
 cmake_minimum_required(VERSION 3.28...3.30)
 
 option(ENABLE_PLUGINS "Enable building OBS plugins" ON)
@@ -82,6 +91,7 @@ check_obs_websocket()
 add_obs_plugin(obs-x264)
 add_obs_plugin(oss-audio PLATFORMS FREEBSD OPENBSD)
 add_obs_plugin(rtmp-services)
+add_obs_plugin(scene-3d-source)
 add_obs_plugin(sndio PLATFORMS LINUX FREEBSD OPENBSD)
 add_obs_plugin(text-freetype2)
 add_obs_plugin(vlc-video WITH_MESSAGE)

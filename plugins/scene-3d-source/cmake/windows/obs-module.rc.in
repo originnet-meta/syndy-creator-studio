@@ -1,0 +1,42 @@
+/******************************************************************************
+    Copyright (C) 2026 Uniflow, Inc.
+    Author: Kim Taehyung <gaiaengine@gmail.com>
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+******************************************************************************/
+
+1 VERSIONINFO
+FILEVERSION ${OBS_VERSION_MAJOR},${OBS_VERSION_MINOR},${OBS_VERSION_PATCH},0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "${OBS_COMPANY_NAME}"
+      VALUE "FileDescription", "OBS scene 3D source module"
+      VALUE "FileVersion", "${OBS_VERSION_CANONICAL}"
+      VALUE "ProductName", "${OBS_PRODUCT_NAME}"
+      VALUE "ProductVersion", "${OBS_VERSION_CANONICAL}"
+      VALUE "Comments", "${OBS_COMMENTS}"
+      VALUE "LegalCopyright", "${OBS_LEGAL_COPYRIGHT}"
+      VALUE "InternalName", "scene-3d-source"
+      VALUE "OriginalFilename", "scene-3d-source"
+    END
+  END
+
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0409, 0x04B0
+  END
+END
