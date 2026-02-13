@@ -23,7 +23,15 @@ cmake_minimum_required(VERSION 3.28...3.30)
 add_library(scene-3d-source MODULE)
 add_library(OBS::scene-3d-source ALIAS scene-3d-source)
 
-target_sources(scene-3d-source PRIVATE scene-3d-plugin.c scene-3d-source.c scene-3d-source.h)
+target_sources(
+  scene-3d-source
+  PRIVATE
+    scene-3d-plugin.c
+    scene-3d-source.c
+    scene-3d-source.h
+    scene-3d-gltf-loader.c
+    scene-3d-gltf-loader.h
+)
 
 target_link_libraries(scene-3d-source PRIVATE OBS::libobs $<$<PLATFORM_ID:Windows>:OBS::w32-pthreads>)
 

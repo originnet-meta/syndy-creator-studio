@@ -16,7 +16,7 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ******************************************************************************/
 
-uniform texture2d image;
+uniform texture2d effect_base_color_param;
 
 sampler_state linear_sampler {
 	Filter = Linear;
@@ -36,7 +36,7 @@ VertData VSDefault(VertData v)
 
 float4 PSDefault(VertData v) : TARGET
 {
-	return image.Sample(linear_sampler, v.uv);
+	return effect_base_color_param.Sample(linear_sampler, v.uv);
 }
 
 technique Draw

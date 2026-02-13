@@ -3,7 +3,7 @@
 ## 1. Scope & Non-Goals
 
 ### Scope (MVP)
-- Windows + D3D11 환경에서 신규 입력 소스(`model3d_source` 가칭) 추가.
+- Windows + D3D11 환경에서 신규 입력 소스(`scene_3d_source` 가칭) 추가.
 - 로컬 디스크 `.glb/.gltf` 파일(Draco 압축 포함) 선택 후 메시(단일/복수 primitive) + baseColor 텍스처 렌더링.
 - 알파 블렌딩/컴포지팅은 OBS 표준 소스 렌더 경로를 사용.
 - 색공간은 `sRGB 텍스처 샘플링 + linear 셰이딩 + framebuffer sRGB` 규칙을 준수.
@@ -51,7 +51,7 @@
 
 ## 3. Key Decisions
 
-1. **신규 플러그인 방식 채택 (`plugins/model3d-source`)**
+1. **신규 플러그인 방식 채택 (`plugins/scene-3d-source`)**
    - 이유: 기존 `image-source`가 입력 소스 + 파일 프로퍼티 + GPU upload 수명주기 패턴을 이미 보유.
    - 대안: `image-source` 확장(리스크: 책임 과대, 회귀 영향 증가).
 
@@ -85,7 +85,7 @@
 - OBS renderer: Direct3D 11 (`libobs-d3d11`)
 
 ### Build-time
-- 신규 plugin target: `plugins/model3d-source/CMakeLists.txt`
+- 신규 plugin target: `plugins/scene-3d-source/CMakeLists.txt`
 - glTF parser: `cgltf` (single-header/source vendoring)
 - Draco decoder: Google Draco 라이브러리(또는 동등 decoder) 정적 링크/서브모듈 도입
 - 이미지 디코더: 기존 libobs image path 재사용 가능성 우선 검토, 필요 시 plugin-local decoder 최소화
@@ -130,7 +130,7 @@
 
 | ID | 트랙 | Task 요약 | 상세 설명(무엇/왜/어떻게) | 의존성 | 검증/AC | 코드 근거(Evidence) |
 |---|---|---|---|---|---|---|
-| BLD-01 | 빌드 | 신규 플러그인 골격 추가 | `plugins/model3d-source` 생성, module entry + CMake 타깃 추가. 기존 image-source 패턴 재사용으로 리스크 축소. | 없음 | Windows 빌드에서 plugin dll 생성, 모듈 로드 로그 확인 | `plugins/CMakeLists.txt:add_obs_plugin` / `plugins/image-source/CMakeLists.txt` / `plugins/image-source/image-source.c:obs_module_load` |
+| BLD-01 | 빌드 | 신규 플러그인 골격 추가 | `plugins/scene-3d-source` 생성, module entry + CMake 타깃 추가. 기존 image-source 패턴 재사용으로 리스크 축소. | 없음 | Windows 빌드에서 plugin dll 생성, 모듈 로드 로그 확인 | `plugins/CMakeLists.txt:add_obs_plugin` / `plugins/image-source/CMakeLists.txt` / `plugins/image-source/image-source.c:obs_module_load` |
 | BLD-02 | 빌드 | effect/locale/data 설치 경로 구성 | plugin data 하위에 `.effect`, locale ini, 기본 샘플 에셋 경로 구성. 런타임 `obs_find_data_file` 규칙과 정합. | BLD-01 | 실행 시 effect/locale 로드 성공, locale key 표시 | `libobs/obs.c:obs_load_effect` / `plugins/image-source/image-source.c:OBS_MODULE_USE_DEFAULT_LOCALE` |
 | BLD-03 | 빌드 | Draco 디코더 + glTF 파서 도입 및 라이선스 정리 | cgltf + Draco decoder 3rdparty를 plugin-local 또는 deps 하위 도입, 라이선스 파일 및 CMake 옵션화. | BLD-01 | clean build + NOTICE/라이선스 검토 체크리스트 통과 | 전역 검색 결과(기존 glTF/Draco 파서 부재), `deps/` 구조, `plugins/*/CMakeLists.txt` 패턴 |
 
@@ -179,7 +179,7 @@
 ### 구현 요약
 
 - **작업 진입점**: `plugins/CMakeLists.txt`, `plugins/image-source/CMakeLists.txt`, `plugins/image-source/image-source.c:obs_module_load`
-- **핵심 변경**: `plugins/model3d-source` 신규 모듈 골격 생성, plugin target/data/locale 기본 구조 연결
+- **핵심 변경**: `plugins/scene-3d-source` 신규 모듈 골격 생성, plugin target/data/locale 기본 구조 연결
 - **등록 지점**: `obs_module_load`에서 `obs_register_source` 호출 구조 확립
 - **가드/호환성**: 기존 플러그인 로딩 순서/동작 불변, 신규 모듈 미사용 시 영향 없음
 - **테스트**: Windows 빌드 1회 + 모듈 로드 로그 확인
@@ -192,12 +192,12 @@ id: IMP-01
 prompt: |
   syndy-creator-studio 레포에서 IMP-01만 수행한다.
   목표:
-  - plugins/model3d-source 스캐폴딩을 추가하고 CMake에 연결한다.
+  - plugins/scene-3d-source 스캐폴딩을 추가하고 CMake에 연결한다.
   - 모듈 엔트리(obs_module_load)에서 source 등록 구조를 만든다.
   작업 순서:
   1) plugins/image-source 패턴으로 폴더/파일 골격 생성
   2) plugins/CMakeLists.txt에 add_obs_plugin 항목 추가
-  3) model3d-source CMake와 locale/effect 데이터 경로 연결
+  3) scene-3d-source CMake와 locale/effect 데이터 경로 연결
   4) 빌드로 모듈 로딩 가능 여부 확인
 ```
 
@@ -221,7 +221,7 @@ id: IMP-02
 prompt: |
   syndy-creator-studio 레포에서 IMP-02만 수행한다.
   목표:
-  - model3d source 프로퍼티에 glb/gltf 파일 선택과 Draco 관련 옵션을 추가한다.
+  - scene-3d source 프로퍼티에 glb/gltf 파일 선택과 Draco 관련 옵션을 추가한다.
   작업 순서:
   1) properties 함수에 파일 필터와 bool/list 옵션 추가
   2) defaults/update 경로에 설정 키를 연결
@@ -249,7 +249,7 @@ id: IMP-03
 prompt: |
   syndy-creator-studio 레포에서 IMP-03만 수행한다.
   목표:
-  - model3d source의 obs_source_info 계약과 수명주기 콜백을 구현한다.
+  - scene-3d source의 obs_source_info 계약과 수명주기 콜백을 구현한다.
   작업 순서:
   1) source context 구조체 정의
   2) 필수/핵심 콜백 연결
@@ -263,7 +263,7 @@ prompt: |
 
 ### 구현 요약
 
-- **작업 진입점**: 신규 `plugins/model3d-source/model3d-loader.*`, 참고 `plugins/text-freetype2/obs-convenience.c`
+- **작업 진입점**: 신규 `plugins/scene-3d-source/scene-3d-loader.*`, 참고 `plugins/text-freetype2/obs-convenience.c`
 - **핵심 변경**: `KHR_draco_mesh_compression` 우선 디코드 + non-Draco accessor fallback
 - **디코드 경로**: positions/uv0/indices 복원, baseColor 텍스처 URI/embedded 처리
 - **가드/호환성**: 디코드 실패 시 명시적 오류 반환/로그, 미지원 속성 graceful skip
@@ -334,7 +334,7 @@ id: IMP-06
 prompt: |
   syndy-creator-studio 레포에서 IMP-06만 수행한다.
   목표:
-  - model3d source 색공간/알파 처리를 D3D11 우선으로 정합시킨다.
+  - scene-3d source 색공간/알파 처리를 D3D11 우선으로 정합시킨다.
   작업 순서:
   1) texture 파라미터 sRGB setter 적용
   2) framebuffer sRGB 토글 규칙 표준화
@@ -362,7 +362,7 @@ id: IMP-07
 prompt: |
   syndy-creator-studio 레포에서 IMP-07만 수행한다.
   목표:
-  - D3D11 device loss/재초기화 상황에서 model3d source 수명주기를 안정화한다.
+  - D3D11 device loss/재초기화 상황에서 scene-3d source 수명주기를 안정화한다.
   작업 순서:
   1) 손실 이벤트 수신/해제 경로 설계
   2) GPU 리소스 재생성 트리거 연결
@@ -390,7 +390,7 @@ id: IMP-08
 prompt: |
   syndy-creator-studio 레포에서 IMP-08만 수행한다.
   목표:
-  - model3d source에 대한 Draco 중심 테스트/검증 시나리오를 정리하고 하네스에 연결한다.
+  - scene-3d source에 대한 Draco 중심 테스트/검증 시나리오를 정리하고 하네스에 연결한다.
   작업 순서:
   1) smoke/회귀/성능 시나리오 분류
   2) test-input 기반 자동 검증 포인트 정의
