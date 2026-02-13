@@ -1,3 +1,11 @@
+..
+   /******************************************************************************
+       Modifications Copyright (C) 2026 Uniflow, Inc.
+       Author: Kim Taehyung <gaiaengine@gmail.com>
+       Modified: 2026-02-12
+       Notes: Changes for Syndy Creator Studio.
+   ******************************************************************************/
+
 Source Profiler
 ===============
 
@@ -45,7 +53,7 @@ The source profiler is used to get information about individual source's perform
 
 
 Source Profiler Functions
----------------------
+-------------------------
 
 .. function:: void source_profiler_enable(bool enable)
 

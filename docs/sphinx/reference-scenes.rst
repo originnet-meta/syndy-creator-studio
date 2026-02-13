@@ -1,3 +1,11 @@
+..
+   /******************************************************************************
+       Modifications Copyright (C) 2026 Uniflow, Inc.
+       Author: Kim Taehyung <gaiaengine@gmail.com>
+       Modified: 2026-02-12
+       Notes: Changes for Syndy Creator Studio.
+   ******************************************************************************/
+
 Scene API Reference (obs_scene_t)
 =================================
 
@@ -574,8 +582,6 @@ Scene Item Functions
    :param show: If *true*, this will return the show transition.
                 If *false*, this will return the hide transition.
    :return:     The transition for showing or hiding a scene item. *NULL* if no transition is set.
-
----------------------
 
 ---------------------
 

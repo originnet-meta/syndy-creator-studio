@@ -1,3 +1,11 @@
+..
+   /******************************************************************************
+       Modifications Copyright (C) 2026 Uniflow, Inc.
+       Author: Kim Taehyung <gaiaengine@gmail.com>
+       Modified: 2026-02-12
+       Notes: Changes for Syndy Creator Studio.
+   ******************************************************************************/
+
 Output API Reference (obs_output_t)
 ===================================
 
@@ -734,8 +742,7 @@ General Output Functions
 
 ---------------------
 
-.. function:: void obs_output_add_packet_callback(obs_output_t *output, void (*packet_cb)(obs_output_t *output,
-              struct encoder_packet *pkt, struct encoder_packet_time *pkt_time, void *param), void *param)
+.. function:: void obs_output_add_packet_callback(obs_output_t *output, obs_output_packet_callback_t packet_cb, void *param)
 
    Register a packet callback function for the output. The callback is invoked for each compressed
    packet just before sending to the service. This packet callback mechanism is the preferred method
@@ -749,6 +756,16 @@ General Output Functions
    :param param:      Data passed to the callback
    :return:           When the callback is added
 
+   Relevant data types used with this function:
+
+.. code:: cpp
+
+   typedef void (*obs_output_packet_callback_t)(
+           obs_output_t *output,
+           struct encoder_packet *pkt,
+           struct encoder_packet_time *pkt_time,
+           void *param);
+
    packet_cb() arguments:
    :param output:     The output associated with the invoked callback function
    :param pkt:        Compressed data packet (audio or video)
@@ -759,8 +776,7 @@ General Output Functions
 
 ---------------------
 
-.. function:: void obs_output_remove_packet_callback(obs_output_t *output, void (*packet_cb)(obs_output_t *output,
-              struct encoder_packet *pkt, struct encoder_packet_time *pkt_time, void *param), void *param)
+.. function:: void obs_output_remove_packet_callback(obs_output_t *output, obs_output_packet_callback_t packet_cb, void *param)
 
    Remove a packet callback function for the output, that had been previously registered with
    `obs_output_add_packet_callback()`.

@@ -1,3 +1,11 @@
+..
+   /******************************************************************************
+       Modifications Copyright (C) 2026 Uniflow, Inc.
+       Author: Kim Taehyung <gaiaengine@gmail.com>
+       Modified: 2026-02-12
+       Notes: Changes for Syndy Creator Studio.
+   ******************************************************************************/
+
 Canvas API Reference (obs_canvas_t)
 ===================================
 
@@ -298,5 +306,3 @@ Canvas Video Functions
 .. function:: void obs_canvas_render(obs_canvas_t *canvas)
 
    Render the canvas's view. Must be called on the graphics thread.
-
----------------------
