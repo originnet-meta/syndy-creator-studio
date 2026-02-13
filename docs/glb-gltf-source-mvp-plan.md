@@ -172,17 +172,231 @@
 
 ---
 
-## 7. Implementation List
+## 7. Implementation Plans (IMP-01 ~ IMP-08)
 
-| Impl ID | 관련 Task ID | 구현 목표 | 진입점(실제 파일 + 심볼 후보) | 의존성 | 구현 요약 | 작업 과정(steps) | 사용된 기술 | 왜 이렇게 하는지 | Codex Task Prompt |
-|---|---|---|---|---|---|---|---|---|---|
-| IMP-01 | BLD-01, BLD-02 | 신규 `model3d-source` 플러그인 골격 생성 | `plugins/CMakeLists.txt:add_obs_plugin` 패턴, `plugins/image-source/CMakeLists.txt`, `plugins/image-source/image-source.c:obs_module_load` | 없음 | image-source 템플릿 기반으로 module entry/CMake/data 폴더 스캐폴딩 | 1) `plugins/model3d-source` 생성 2) CMake target/source 등록 3) `OBS_DECLARE_MODULE` + `obs_module_load` 작성 4) data/locale/effect 기본 파일 배치 5) plugins 루트에 add_obs_plugin 추가 | CMake, obs-module API | 기존 구조를 따를수록 리뷰/유지보수 비용이 낮음 | "IMP-01만 수행: image-source 패턴을 참고해 plugins/model3d-source의 CMake/모듈 엔트리/데이터 폴더를 스캐폴딩하고 빌드 연결까지 완료하라. 다른 Impl 변경 금지." |
-| IMP-02 | UX-01, UX-02, UX-03, LDR-01 | 파일 선택/옵션/로케일 UI 및 설정 플로우 구현 | `libobs/obs-properties.h:obs_properties_add_path`, `plugins/image-source/image-source.c:image_source_properties` | IMP-01 | glb/gltf path 및 Draco 지원 옵션 프로퍼티 제공, locale 키 연결 | 1) properties 함수 생성 2) path filter에 `*.glb *.gltf` 설정 3) Draco fallback 옵션(압축 메시 미지원 시 실패/스킵 정책) 추가 4) defaults/update에서 settings 바인딩 5) locale key 정의(en-US 우선) 6) 잘못된 경로 warning 추가 | OBS properties API, locale | 사용자 입력/설정 경로를 먼저 고정해야 로더/렌더 구현이 단순해짐 | "IMP-02만 수행: model3d source에 glb/gltf 파일 선택 프로퍼티와 Draco 관련 옵션(예: decode policy)을 추가하고 locale 키를 연결하라." |
-| IMP-03 | RND-01, RND-02 | source 기본 수명주기 + 렌더 함수 뼈대 구현 | `libobs/obs-source.h:struct obs_source_info`, `libobs/obs-module.c:obs_register_source_s`, `libobs/graphics/graphics.c:gs_effect_create_from_file` | IMP-01, IMP-02 | create/destroy/update/get_size/video_tick/video_render 기본 루프 구축 | 1) source context struct 정의 2) obs_source_info 채우기 3) effect 로딩/해제 루틴 구현 4) width/height 정책 정의(모델 AABB 또는 고정 기준) 5) 빈 draw(테스트 삼각형)로 smoke 확인 | obs_source_info, gs_effect, gs_draw | 초기엔 렌더 계약을 먼저 안정화해야 후속 로더 결합 시 디버깅이 쉽다 | "IMP-03만 수행: model3d source의 obs_source_info/생명주기/기본 video_render 루프를 구현하고 effect 로딩까지 완료하라." |
-| IMP-04 | LDR-01, LDR-02, LDR-04 | Draco 기반 glTF/GLB CPU 로더 구현(MVP subset) | 신규 파일(예: `plugins/model3d-source/model3d-loader.*`), 참고: `plugins/text-freetype2/obs-convenience.c` VB 데이터 패턴 | IMP-03, BLD-03 | cgltf로 노드/머티리얼 파싱 후 Draco extension을 우선 디코드해 CPU payload 생성 | 1) parser 래퍼 작성 2) `KHR_draco_mesh_compression` extension 감지 3) Draco bitstream decode로 positions/uv0/indices 복원 4) extension 미사용 primitive는 accessor 경로로 처리 5) 이미지 소스(uri/bufferView) 디코드 6) CPU payload 구조 정의 7) 오류코드/로그 체계화 | cgltf + Draco decoder, 메모리 파서, 이미지 디코드 | 압축 메시가 실제 배포 자산에서 일반적이므로 MVP부터 decode 경로를 1급 경로로 확보해야 함 | "IMP-04만 수행: cgltf + Draco decoder를 사용해 KHR_draco_mesh_compression primitive를 우선 디코드하고, fallback accessor 경로까지 포함한 CPU 로더를 구현하라." |
-| IMP-05 | LDR-03, RND-03 | 비동기 로딩 + 그래픽스 스레드 업로드 브릿지 | `plugins/image-source/image-source.c:file_decoded/texture_loaded`, `libobs/obs.c:obs_enter_graphics` | IMP-04 | worker thread parse 결과를 render tick에서 업로드하도록 상태기계 구현 | 1) worker job queue/취소 토큰 구현 2) pending payload mutex 보호 3) video_tick에서 payload polling 4) `obs_enter_graphics`로 VB/IB/Texture 생성 5) old/new 리소스 스왑 6) destroy 시 thread join + graphics safe free | threading, atomics, obs_enter_graphics | 렌더 스레드 stall 방지와 안전한 GPU lifetime 양립 | "IMP-05만 수행: model3d source에 비동기 로더와 render-thread GPU 업로드 상태기계를 추가하라. GPU 생성/해제는 obs_enter_graphics 구간에서만 수행하라." |
-| IMP-06 | RND-04, RND-05, TST-02 | 색공간 정확화 + D3D11 검증 훅 | `plugins/image-source/image-source.c:image_source_render`, `libobs-d3d11/d3d11-texture2d.cpp:InitResourceView`, `libobs-d3d11/d3d11-subsystem.cpp:device_register_loss_callbacks` | IMP-05 | sRGB 텍스처 샘플링/알파 블렌드 규칙 고정, D3D11 리셋 대응 최소 설계 | 1) effect 파라미터 `image`는 sRGB setter 사용 2) framebuffer_srgb push/pop 3) OBS_SOURCE_SRGB flag 검토 4) D3D11에서 linear/sRGB 출력 비교 캡처 체크 5) device-loss 발생 시 재업로드 트리거 경로 마련 | gs_effect_set_texture_srgb, D3D11 SRV, device-loss callback | 색 틀어짐/알파 오염은 릴리즈 결함으로 직결되어 MVP에서 선제 차단 필요 | "IMP-06만 수행: model3d source의 sRGB/linear 처리와 알파 블렌딩을 정합시키고 D3D11 기준 검증 포인트를 코드에 반영하라." |
-| IMP-07 | TST-01, TST-03, TST-04 | 테스트/검증 시나리오 자동화 및 문서화 | `test/CMakeLists.txt`, `test/test-input/test-input.c` 패턴 | IMP-06 | 최소 smoke + scene transform + 장시간 안정성 체크 절차 정리(가능 범위 자동화) | 1) test-input 유사 테스트 모듈/스크립트 설계 2) 소스 생성/삭제 반복 테스트 3) scene transform regression 케이스 4) D3D11 전용 수동 체크리스트 문서화 5) CI job 후보 정의 | cmake test harness, smoke/regression | 기능 추가 후 회귀를 빠르게 잡기 위한 최소 안전망 | "IMP-07만 수행: model3d source의 smoke/scene transform/수명주기 테스트 계획을 test 하네스에 맞게 정리하고 실행 스크립트 초안을 작성하라." |
+## [IMP-01] 플러그인 스캐폴딩 + 빌드 타깃 연결
+
+### 구현 요약
+
+- **작업 진입점**: `plugins/CMakeLists.txt`, `plugins/image-source/CMakeLists.txt`, `plugins/image-source/image-source.c:obs_module_load`
+- **핵심 변경**: `plugins/model3d-source` 신규 모듈 골격 생성, plugin target/data/locale 기본 구조 연결
+- **등록 지점**: `obs_module_load`에서 `obs_register_source` 호출 구조 확립
+- **가드/호환성**: 기존 플러그인 로딩 순서/동작 불변, 신규 모듈 미사용 시 영향 없음
+- **테스트**: Windows 빌드 1회 + 모듈 로드 로그 확인
+
+### Codex Task Prompt (붙여넣기용)
+
+```text
+TASK:
+id: IMP-01
+prompt: |
+  syndy-creator-studio 레포에서 IMP-01만 수행한다.
+  목표:
+  - plugins/model3d-source 스캐폴딩을 추가하고 CMake에 연결한다.
+  - 모듈 엔트리(obs_module_load)에서 source 등록 구조를 만든다.
+  작업 순서:
+  1) plugins/image-source 패턴으로 폴더/파일 골격 생성
+  2) plugins/CMakeLists.txt에 add_obs_plugin 항목 추가
+  3) model3d-source CMake와 locale/effect 데이터 경로 연결
+  4) 빌드로 모듈 로딩 가능 여부 확인
+```
+
+---
+
+## [IMP-02] 설정/프로퍼티 UI + Draco 지원 옵션 추가
+
+### 구현 요약
+
+- **작업 진입점**: `libobs/obs-properties.h:obs_properties_add_path`, `plugins/image-source/image-source.c:image_source_properties`
+- **핵심 변경**: `*.glb *.gltf` 파일 선택 + Draco decode policy 옵션 + 상태/오류 메시지 키 추가
+- **콜백 지점**: `update`에서 settings 반영, 필요 시 modified callback으로 동적 UI 토글
+- **가드/호환성**: 옵션 미설정 시 안전한 기본값으로 동작
+- **테스트**: 속성창 열기/저장/재열기 및 잘못된 경로 입력 경고 확인
+
+### Codex Task Prompt (붙여넣기용)
+
+```text
+TASK:
+id: IMP-02
+prompt: |
+  syndy-creator-studio 레포에서 IMP-02만 수행한다.
+  목표:
+  - model3d source 프로퍼티에 glb/gltf 파일 선택과 Draco 관련 옵션을 추가한다.
+  작업 순서:
+  1) properties 함수에 파일 필터와 bool/list 옵션 추가
+  2) defaults/update 경로에 설정 키를 연결
+  3) locale 문자열 키 추가(en-US 우선)
+  4) 경로 오류/미지원 포맷 warning 메시지 정리
+```
+
+---
+
+## [IMP-03] source 수명주기/렌더 루프 기본 계약 구현
+
+### 구현 요약
+
+- **작업 진입점**: `libobs/obs-source.h:struct obs_source_info`, `libobs/obs-module.c:obs_register_source_s`
+- **핵심 변경**: `create/destroy/update/get_width/get_height/video_tick/video_render` 기본 루프 구현
+- **렌더 계약**: `OBS_SOURCE_VIDEO | OBS_SOURCE_SRGB` 기준으로 draw 진입 경로 확보
+- **가드/호환성**: resource null-check 및 빈 프레임에서 no-op draw
+- **테스트**: 소스 생성/삭제 반복 시 crash-free 확인
+
+### Codex Task Prompt (붙여넣기용)
+
+```text
+TASK:
+id: IMP-03
+prompt: |
+  syndy-creator-studio 레포에서 IMP-03만 수행한다.
+  목표:
+  - model3d source의 obs_source_info 계약과 수명주기 콜백을 구현한다.
+  작업 순서:
+  1) source context 구조체 정의
+  2) 필수/핵심 콜백 연결
+  3) 기본 effect 로딩과 video_render 골격 작성
+  4) width/height 반환 정책 확정
+```
+
+---
+
+## [IMP-04] Draco 기반 glTF/GLB CPU 로더 구현
+
+### 구현 요약
+
+- **작업 진입점**: 신규 `plugins/model3d-source/model3d-loader.*`, 참고 `plugins/text-freetype2/obs-convenience.c`
+- **핵심 변경**: `KHR_draco_mesh_compression` 우선 디코드 + non-Draco accessor fallback
+- **디코드 경로**: positions/uv0/indices 복원, baseColor 텍스처 URI/embedded 처리
+- **가드/호환성**: 디코드 실패 시 명시적 오류 반환/로그, 미지원 속성 graceful skip
+- **테스트**: Draco 샘플/비Draco 샘플 각각 로드 성공
+
+### Codex Task Prompt (붙여넣기용)
+
+```text
+TASK:
+id: IMP-04
+prompt: |
+  syndy-creator-studio 레포에서 IMP-04만 수행한다.
+  목표:
+  - cgltf + Draco decoder로 KHR_draco_mesh_compression primitive를 디코드한다.
+  - extension이 없는 primitive는 accessor 경로로 fallback 처리한다.
+  작업 순서:
+  1) glTF 파서 래퍼 작성
+  2) Draco extension 감지 및 비트스트림 decode
+  3) CPU payload(정점/인덱스/UV/텍스처) 구성
+  4) 오류코드/로그 표준화
+```
+
+---
+
+## [IMP-05] 비동기 로드 → 렌더 스레드 업로드 브리지
+
+### 구현 요약
+
+- **작업 진입점**: `plugins/image-source/image-source.c:file_decoded/texture_loaded`, `libobs/obs.c:obs_enter_graphics`
+- **핵심 변경**: worker thread parse/decode, render tick에서 GPU 업로드 state machine 구축
+- **업로드 지점**: `obs_enter_graphics` 구간에서 VB/IB/texture create/swap/free
+- **가드/호환성**: 취소 토큰, source destroy 시 join 순서 보장
+- **테스트**: 대형 모델 로드시 프레임 hitch 감소 및 반복 로드 안정성 확인
+
+### Codex Task Prompt (붙여넣기용)
+
+```text
+TASK:
+id: IMP-05
+prompt: |
+  syndy-creator-studio 레포에서 IMP-05만 수행한다.
+  목표:
+  - 로더 비동기화와 render-thread GPU 업로드 브리지를 구현한다.
+  작업 순서:
+  1) worker job queue + cancel token 추가
+  2) pending payload 동기화 구조 구현
+  3) video_tick에서 업로드 트리거
+  4) destroy 시 thread/resource 정리 순서 고정
+```
+
+---
+
+## [IMP-06] 색공간/알파 규칙 정합 + D3D11 검증 포인트 추가
+
+### 구현 요약
+
+- **작업 진입점**: `plugins/image-source/image-source.c:image_source_render`, `libobs-d3d11/d3d11-texture2d.cpp:InitResourceView`
+- **핵심 변경**: `gs_effect_set_texture_srgb` 적용, framebuffer sRGB push/pop, premultiplied 알파 규칙 고정
+- **D3D11 관점**: linear/sRGB SRV 분리 동작을 기준으로 결과 검증
+- **가드/호환성**: 색공간 미지정 시 안전 기본값 적용
+- **테스트**: 기준 패턴 이미지 캡처 비교(색편차/알파 halo)
+
+### Codex Task Prompt (붙여넣기용)
+
+```text
+TASK:
+id: IMP-06
+prompt: |
+  syndy-creator-studio 레포에서 IMP-06만 수행한다.
+  목표:
+  - model3d source 색공간/알파 처리를 D3D11 우선으로 정합시킨다.
+  작업 순서:
+  1) texture 파라미터 sRGB setter 적용
+  2) framebuffer sRGB 토글 규칙 표준화
+  3) 알파 blend state 검토/보정
+  4) D3D11 기준 시각 검증 체크포인트 문서화
+```
+
+---
+
+## [IMP-07] 디바이스 리셋/수명주기 안정화
+
+### 구현 요약
+
+- **작업 진입점**: `libobs-d3d11/d3d11-subsystem.cpp:device_register_loss_callbacks`, 소스 destroy/update 경로
+- **핵심 변경**: device-loss 시 재업로드 트리거와 null-safe draw 경로 정립
+- **수명주기 포인트**: scene 전환/소스 제거/파일 교체 시 리소스 누수 방지
+- **가드/호환성**: 콜백 미등록 또는 손실 이벤트 부재 시 기존 경로 유지
+- **테스트**: 장면 전환/소스 재생성/그래픽 초기화 반복 안정성 확인
+
+### Codex Task Prompt (붙여넣기용)
+
+```text
+TASK:
+id: IMP-07
+prompt: |
+  syndy-creator-studio 레포에서 IMP-07만 수행한다.
+  목표:
+  - D3D11 device loss/재초기화 상황에서 model3d source 수명주기를 안정화한다.
+  작업 순서:
+  1) 손실 이벤트 수신/해제 경로 설계
+  2) GPU 리소스 재생성 트리거 연결
+  3) draw null-guard 및 상태 복구 처리
+  4) 반복 시나리오 안정성 점검
+```
+
+---
+
+## [IMP-08] 테스트 하네스/검증 시나리오 통합
+
+### 구현 요약
+
+- **작업 진입점**: `test/CMakeLists.txt`, `test/test-input/test-input.c`, `test/win/*`
+- **핵심 변경**: Draco ON/OFF 빌드 스모크, scene transform 회귀, 장시간 안정성 체크리스트 정리
+- **자동/수동 분리**: 자동 smoke + 수동 시각 품질 검증으로 단계화
+- **가드/호환성**: 테스트 미실행 환경에서도 기본 빌드/로드 검증은 수행 가능
+- **테스트**: CI 후보 시나리오 및 로컬 재현 명령 문서화
+
+### Codex Task Prompt (붙여넣기용)
+
+```text
+TASK:
+id: IMP-08
+prompt: |
+  syndy-creator-studio 레포에서 IMP-08만 수행한다.
+  목표:
+  - model3d source에 대한 Draco 중심 테스트/검증 시나리오를 정리하고 하네스에 연결한다.
+  작업 순서:
+  1) smoke/회귀/성능 시나리오 분류
+  2) test-input 기반 자동 검증 포인트 정의
+  3) D3D11 수동 시각 검증 체크리스트 작성
+  4) CI 적용 가능한 최소 실행 세트 제안
+```
 
 ---
 
