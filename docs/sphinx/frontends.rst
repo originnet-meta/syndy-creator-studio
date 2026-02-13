@@ -1,3 +1,11 @@
+..
+   /******************************************************************************
+       Modifications Copyright (C) 2026 Uniflow, Inc.
+       Author: Kim Taehyung <gaiaengine@gmail.com>
+       Modified: 2026-02-12
+       Notes: Changes for Syndy Creator Studio.
+   ******************************************************************************/
+
 Frontends
 =========
 
@@ -33,6 +41,91 @@ the :c:func:`bnum_allocs()` to get the number of allocations remaining.
 If the number remaining is above 0, there are memory leaks.
 
 See :ref:`obs_init_shutdown_reference` for more information.
+
+Startup Splash and Progress
+---------------------------
+
+The frontend startup splash path is implemented in the Qt frontend and
+is driven by an explicit startup progress model.
+
+Startup stage flow
+^^^^^^^^^^^^^^^^^^
+
+The startup flow is emitted in this order:
+
+#. ``run_program()`` in ``frontend/obs-main.cpp`` creates
+   ``StartupSplashWidget`` and connects
+   ``OBSApp::startupProgressUpdated``.
+#. ``OBSApp::AppInit()`` sets stage
+   ``StartupProgressStage::AppInitialized``.
+#. ``OBSApp::OBSInit()`` starts libobs and sets stage
+   ``StartupProgressStage::LibobsInitialized``.
+#. ``OBSApp::loadAppModules()`` discovers modules, sets the module
+   denominator, registers ``obs_set_module_load_progress_callback()``,
+   loads modules, then unregisters the callback.
+#. ``OBSBasic::OBSInit()`` sets stages
+   ``ServiceInitialized``, ``SceneCollectionLoaded``, and ``UiReady``.
+#. ``OBSBasic::OnFirstLoad()`` sets stage ``Finished``.
+#. ``run_program()`` closes the splash and continues to the main window
+   event loop.
+
+The default stage-to-percent mapping in
+``frontend/utility/StartupProgressModel.cpp`` is:
+
+- ``Boot``: 0
+- ``AppInitialized``: 15
+- ``LibobsInitialized``: 30
+- ``ModuleDiscovery``: 35
+- ``ModuleLoading``: 35-80 (module-count fraction)
+- ``ModulesLoaded``: 80
+- ``ServiceInitialized``: 90
+- ``SceneCollectionLoaded``: 97
+- ``UiReady``: 99
+- ``Finished``: 100
+
+Operational rollback
+^^^^^^^^^^^^^^^^^^^^
+
+Use either runtime guard to disable startup splash safely without
+changing module loading behavior:
+
+- Command line: ``--disable-startup-splash``
+- Config: ``[General] EnableStartupSplash=false`` in ``global.ini``
+
+Effective behavior is defined by
+``OBS::IsStartupSplashEnabled(disabledByCli, enabledInConfig)``:
+
+- If CLI disable is set, splash is disabled.
+- If CLI disable is not set and config is ``false``, splash is disabled.
+- Otherwise splash is enabled.
+
+Validation and release checklist
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Before release, verify startup splash with both automated tests and
+runtime scenarios.
+
+Automated:
+
+- Run ``startup-progress-model-test``
+- Run ``startup-progress-mapping-test``
+- Run ``startup-splash-guard-test``
+- Run ``startup-splash-widget-test``
+
+Runtime:
+
+- Basic startup
+- ``--safe-mode``
+- ``--only-bundled-plugins``
+- Tray-start path (``--minimize-to-tray``)
+- CLI rollback (``--disable-startup-splash``)
+- Config rollback (``EnableStartupSplash=false``)
+
+Packaging:
+
+- Confirm ``:/res/images/obs.png`` is available in packaged binaries
+- Confirm locale keys under ``Startup.Splash.*`` are present in package
+- Confirm startup logs do not contain missing-resource errors for splash
 
 
 Reconfiguring Video

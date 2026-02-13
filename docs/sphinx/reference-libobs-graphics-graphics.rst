@@ -1,3 +1,11 @@
+..
+   /******************************************************************************
+       Modifications Copyright (C) 2026 Uniflow, Inc.
+       Author: Kim Taehyung <gaiaengine@gmail.com>
+       Modified: 2026-02-12
+       Notes: Changes for Syndy Creator Studio.
+   ******************************************************************************/
+
 Core Graphics API
 =================
 
@@ -646,8 +654,8 @@ Resource Loading
 ---------------------
 
 
-Draw Functions
---------------
+Render Target and Draw Functions
+--------------------------------
 
 .. function:: enum gs_color_space gs_get_color_space(void)
 

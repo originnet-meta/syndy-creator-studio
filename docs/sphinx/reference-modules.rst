@@ -1,3 +1,11 @@
+..
+   /******************************************************************************
+       Modifications Copyright (C) 2026 Uniflow, Inc.
+       Author: Kim Taehyung <gaiaengine@gmail.com>
+       Modified: 2026-02-12
+       Notes: Changes for Syndy Creator Studio.
+   ******************************************************************************/
+
 Module API Reference
 ====================
 
@@ -268,6 +276,58 @@ plugin modules.
            char **failed_modules;
            size_t count;
    };
+
+---------------------
+
+.. function:: void obs_set_module_load_progress_callback(obs_module_load_progress_callback_t callback, void *param)
+
+   Registers a module load progress callback for
+   :c:func:`obs_load_all_modules()` and :c:func:`obs_load_all_modules2()`.
+   Pass ``NULL`` to clear the callback.
+
+   Callback contract:
+
+   - One ``OBS_MODULE_LOAD_PROGRESS_BEGIN`` event is emitted when module
+     processing starts.
+   - A terminal event is then emitted as exactly one of:
+     ``OBS_MODULE_LOAD_PROGRESS_SUCCESS``,
+     ``OBS_MODULE_LOAD_PROGRESS_SKIP``, or
+     ``OBS_MODULE_LOAD_PROGRESS_FAILURE``.
+   - ``reason`` is ``OBS_MODULE_LOAD_REASON_NONE`` for ``BEGIN`` and
+     successful loads, and contains the skip/failure reason otherwise.
+   - ``module_name`` uses discovered module name when available, falling
+     back to binary path when name metadata is unavailable.
+   - If no callback is registered, module loading proceeds unchanged.
+
+   Relevant data types used with this function:
+
+.. code:: cpp
+
+   enum obs_module_load_progress {
+           OBS_MODULE_LOAD_PROGRESS_BEGIN,
+           OBS_MODULE_LOAD_PROGRESS_SKIP,
+           OBS_MODULE_LOAD_PROGRESS_FAILURE,
+           OBS_MODULE_LOAD_PROGRESS_SUCCESS,
+   };
+
+   enum obs_module_load_reason {
+           OBS_MODULE_LOAD_REASON_NONE,
+           OBS_MODULE_LOAD_REASON_NOT_OBS_PLUGIN,
+           OBS_MODULE_LOAD_REASON_NOT_SAFE_MODULE,
+           OBS_MODULE_LOAD_REASON_DISABLED_MODULE,
+           OBS_MODULE_LOAD_REASON_MISSING_EXPORTS,
+           OBS_MODULE_LOAD_REASON_FAILED_TO_OPEN,
+           OBS_MODULE_LOAD_REASON_ERROR,
+           OBS_MODULE_LOAD_REASON_INCOMPATIBLE_VERSION,
+           OBS_MODULE_LOAD_REASON_HARDCODED_SKIP,
+           OBS_MODULE_LOAD_REASON_FAILED_TO_INITIALIZE,
+   };
+
+   typedef void (*obs_module_load_progress_callback_t)(
+           void *param,
+           const char *module_name,
+           enum obs_module_load_progress progress,
+           enum obs_module_load_reason reason);
 
 ---------------------
 

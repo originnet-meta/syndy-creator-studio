@@ -3,13 +3,21 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
+..
+   /******************************************************************************
+       Modifications Copyright (C) 2026 Uniflow, Inc.
+       Author: Kim Taehyung <gaiaengine@gmail.com>
+       Modified: 2026-02-12
+       Notes: Changes for Syndy Creator Studio.
+   ******************************************************************************/
+
 .. _contents:
 
-Welcome to OBS Studio's documentation!
-======================================
+Welcome to SYNDY Creator Studio's documentation!
+================================================
 
-* **Setting up an OBS development environment?** :wiki:`Use the Wiki <Install-Instructions>`
-* **Developing your first OBS plugin?** `Use the obs-plugintemplate <https://github.com/obsproject/obs-plugintemplate#obs-plugin-template>`_
+* **Setting up an SYNDY Creator Studio development environment?** :wiki:`Use the Wiki <Install-Instructions>`
+* **Developing your first SYNDY Creator Studio plugin?** `Use the obs-plugintemplate <https://github.com/obsproject/obs-plugintemplate#obs-plugin-template>`_
 
 .. toctree::
    :caption: Core Concepts
@@ -26,6 +34,7 @@ Welcome to OBS Studio's documentation!
    :maxdepth: 2
 
    OBS Core <reference-core>
+   Canvases <reference-canvases>
    Modules <reference-modules>
    Core API Object <reference-core-objects>
    Platform/Utility <reference-libobs-util>

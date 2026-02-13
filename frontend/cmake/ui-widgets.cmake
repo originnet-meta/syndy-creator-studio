@@ -1,3 +1,12 @@
+#[[
+/******************************************************************************
+    Modifications Copyright (C) 2026 Uniflow, Inc.
+    Author: Kim Taehyung <gaiaengine@gmail.com>
+    Modified: 2026-02-12
+    Notes: Changes for Syndy Creator Studio.
+******************************************************************************/
+]]
+
 if(NOT TARGET OBS::qt-vertical-scroll-area)
   add_subdirectory(
     "${CMAKE_SOURCE_DIR}/shared/qt/vertical-scroll-area"
@@ -59,4 +68,6 @@ target_sources(
     widgets/OBSQTDisplay.hpp
     widgets/StatusBarWidget.cpp
     widgets/StatusBarWidget.hpp
+    widgets/StartupSplashWidget.cpp
+    widgets/StartupSplashWidget.hpp
 )
