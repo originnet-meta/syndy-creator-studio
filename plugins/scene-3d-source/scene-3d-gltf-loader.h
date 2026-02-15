@@ -19,7 +19,7 @@
 /******************************************************************************
     Modifications Copyright (C) 2026 Uniflow, Inc.
     Author: Kim Taehyung <gaiaengine@gmail.com>
-    Modified: 2026-02-12
+    Modified: 2026-02-15
     Notes: Changes for Syndy Creator Studio.
 ******************************************************************************/
 
@@ -90,3 +90,5 @@ void scene_3d_gltf_free_cpu_payload(struct scene_3d_cpu_payload *payload);
 bool scene_3d_gltf_load_cpu_payload(const char *model_path, struct scene_3d_cpu_payload *payload,
 				    const struct scene_3d_gltf_load_options *options,
 				    struct scene_3d_gltf_error *error);
+
+bool scene_3d_gltf_model_uses_draco(const char *model_path);

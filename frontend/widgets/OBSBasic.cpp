@@ -20,7 +20,7 @@
 /******************************************************************************
     Modifications Copyright (C) 2026 Uniflow, Inc.
     Author: Kim Taehyung <gaiaengine@gmail.com>
-    Modified: 2026-02-12
+    Modified: 2026-02-15
     Notes: Changes for Syndy Creator Studio.
 ******************************************************************************/
 
@@ -2110,9 +2110,9 @@ void OBSBasic::UpdateTitleBar()
 	const char *profile = config_get_string(App()->GetUserConfig(), "Basic", "Profile");
 	const char *sceneCollection = config_get_string(App()->GetUserConfig(), "Basic", "SceneCollection");
 
-	name << "OBS ";
+	name << "SYNDY Creator Studio ";
 	if (previewProgramMode)
-		name << "Studio ";
+		name << "[" << Str("Basic.TogglePreviewProgramMode") << "] ";
 
 	name << App()->GetVersionString(false);
 	if (safe_mode)

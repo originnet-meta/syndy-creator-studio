@@ -2,7 +2,7 @@
 /******************************************************************************
     Modifications Copyright (C) 2026 Uniflow, Inc.
     Author: Kim Taehyung <gaiaengine@gmail.com>
-    Modified: 2026-02-12
+    Modified: 2026-02-15
     Notes: Changes for Syndy Creator Studio.
 ******************************************************************************/
 ]]
@@ -10,6 +10,32 @@
 project(win-test)
 
 option(ENABLE_WIN_TEST_SAMPLE "Build legacy Win32 rendering sample" OFF)
+
+set(obs_test_obs_deps_bin "")
+foreach(prefix_path IN LISTS CMAKE_PREFIX_PATH)
+  if(EXISTS "${prefix_path}/share/obs-deps/VERSION" AND EXISTS "${prefix_path}/bin")
+    set(obs_test_obs_deps_bin "${prefix_path}/bin")
+    break()
+  endif()
+endforeach()
+
+function(register_win_test target_name)
+  string(REPLACE ";" "\\;" escaped_system_path "$ENV{PATH}")
+  set(test_path "$<TARGET_FILE_DIR:${target_name}>")
+  if(TARGET w32-pthreads)
+    string(APPEND test_path "\\;$<TARGET_FILE_DIR:w32-pthreads>")
+  endif()
+  if(obs_test_obs_deps_bin)
+    string(APPEND test_path "\\;${obs_test_obs_deps_bin}")
+  endif()
+  string(APPEND test_path "\\;${escaped_system_path}")
+
+  add_test(NAME ${target_name} COMMAND $<TARGET_FILE:${target_name}>)
+  set_tests_properties(${target_name} PROPERTIES
+    WORKING_DIRECTORY $<TARGET_FILE_DIR:${target_name}>
+    ENVIRONMENT "PATH=${test_path}"
+  )
+endfunction()
 
 if(ENABLE_WIN_TEST_SAMPLE)
   add_executable(win-test WIN32)
@@ -85,6 +111,7 @@ add_dependencies(module-load-progress-test
   module-progress-missing-exports
   module-progress-not-plugin
 )
+register_win_test(module-load-progress-test)
 
 add_executable(
   startup-progress-model-test
@@ -96,6 +123,7 @@ set_target_properties(startup-progress-model-test PROPERTIES
   FOLDER "tests and examples"
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/libobs/$<CONFIG>"
 )
+register_win_test(startup-progress-model-test)
 
 add_executable(
   startup-progress-mapping-test
@@ -107,6 +135,7 @@ set_target_properties(startup-progress-mapping-test PROPERTIES
   FOLDER "tests and examples"
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/libobs/$<CONFIG>"
 )
+register_win_test(startup-progress-mapping-test)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
@@ -121,6 +150,7 @@ set_target_properties(startup-splash-widget-test PROPERTIES
   FOLDER "tests and examples"
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/libobs/$<CONFIG>"
 )
+register_win_test(startup-splash-widget-test)
 
 add_executable(
   startup-splash-guard-test
@@ -131,3 +161,29 @@ set_target_properties(startup-splash-guard-test PROPERTIES
   FOLDER "tests and examples"
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/libobs/$<CONFIG>"
 )
+register_win_test(startup-splash-guard-test)
+
+set(scene_3d_draco_fixture_dir "${CMAKE_SOURCE_DIR}/test/test-input/data/scene-3d")
+
+add_executable(
+  scene-3d-draco-loader-test
+  scene-3d-draco-loader-test.cpp
+  ../../plugins/scene-3d-source/scene-3d-gltf-loader.c
+  ../../plugins/scene-3d-source/scene-3d-gltf-loader.h
+)
+target_include_directories(
+  scene-3d-draco-loader-test
+  PRIVATE
+    ${CMAKE_SOURCE_DIR}/plugins/scene-3d-source
+)
+target_link_libraries(scene-3d-draco-loader-test PRIVATE OBS::libobs)
+target_compile_definitions(
+  scene-3d-draco-loader-test
+  PRIVATE
+    SCENE_3D_DRACO_FIXTURE_DIR="${scene_3d_draco_fixture_dir}"
+)
+set_target_properties(scene-3d-draco-loader-test PROPERTIES
+  FOLDER "tests and examples"
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/libobs/$<CONFIG>"
+)
+register_win_test(scene-3d-draco-loader-test)

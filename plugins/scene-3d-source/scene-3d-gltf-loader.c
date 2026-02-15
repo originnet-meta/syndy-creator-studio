@@ -16,6 +16,13 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ******************************************************************************/
 
+/******************************************************************************
+    Modifications Copyright (C) 2026 Uniflow, Inc.
+    Author: Kim Taehyung <gaiaengine@gmail.com>
+    Modified: 2026-02-15
+    Notes: Changes for Syndy Creator Studio.
+******************************************************************************/
+
 #include "scene-3d-gltf-loader.h"
 
 #include <ctype.h>
@@ -520,6 +527,50 @@ static bool parse_json_model(const char *model_path, obs_data_t **root, uint8_t 
 	}
 
 	set_error(error, SCENE_3D_GLTF_ERROR_UNSUPPORTED, "Unsupported extension: %s", ext);
+	return false;
+}
+
+static bool model_root_uses_draco_extension(obs_data_t *root)
+{
+	obs_data_array_t *meshes;
+	size_t mesh_count;
+	size_t m;
+
+	if (!root)
+		return false;
+
+	meshes = obs_data_get_array(root, "meshes");
+	if (!meshes)
+		return false;
+
+	mesh_count = obs_data_array_count(meshes);
+	for (m = 0; m < mesh_count; m++) {
+		obs_data_t *mesh = obs_data_array_item(meshes, m);
+		obs_data_array_t *primitives = mesh ? obs_data_get_array(mesh, "primitives") : NULL;
+		size_t primitive_count = primitives ? obs_data_array_count(primitives) : 0;
+		size_t p;
+
+		for (p = 0; p < primitive_count; p++) {
+			obs_data_t *primitive = obs_data_array_item(primitives, p);
+			obs_data_t *extensions = primitive ? obs_data_get_obj(primitive, "extensions") : NULL;
+			bool has_draco = extensions && obs_data_has_user_value(extensions, "KHR_draco_mesh_compression");
+
+			obs_data_release(extensions);
+			obs_data_release(primitive);
+
+			if (has_draco) {
+				obs_data_array_release(primitives);
+				obs_data_release(mesh);
+				obs_data_array_release(meshes);
+				return true;
+			}
+		}
+
+		obs_data_array_release(primitives);
+		obs_data_release(mesh);
+	}
+
+	obs_data_array_release(meshes);
 	return false;
 }
 
@@ -1159,6 +1210,24 @@ static bool decode_meshes(struct loader_ctx *ctx, struct scene_3d_cpu_payload *o
 				obs_data_array_release(meshes);
 				return false;
 			}
+
+			{
+				const struct scene_3d_cpu_primitive_payload *decoded_primitive =
+					&out->meshes[m].primitives[p];
+				const char *decode_path =
+					decoded_primitive->decode_path == SCENE_3D_DECODE_PATH_DRACO ? "draco" : "accessor";
+				const char *mesh_label = (mesh_name && *mesh_name) ? mesh_name : "(unnamed)";
+				const char *texture_label = (decoded_primitive->base_color_texture &&
+							    *decoded_primitive->base_color_texture)
+								   ? decoded_primitive->base_color_texture
+								   : "none";
+
+				blog(LOG_INFO,
+				     "[scene-3d-source:gltf-loader] Parsed mesh[%zu] '%s' primitive[%zu]: vertices=%zu, "
+				     "indices=%zu, decode=%s, texture=%s",
+				     m, mesh_label, p, decoded_primitive->vertex_count, decoded_primitive->index_count,
+				     decode_path, texture_label);
+			}
 		}
 
 		obs_data_array_release(primitives);
@@ -1228,6 +1297,29 @@ void scene_3d_gltf_free_cpu_payload(struct scene_3d_cpu_payload *payload)
 
 	bfree(payload->meshes);
 	memset(payload, 0, sizeof(*payload));
+}
+
+bool scene_3d_gltf_model_uses_draco(const char *model_path)
+{
+	obs_data_t *root = NULL;
+	uint8_t *glb_bin = NULL;
+	size_t glb_bin_size = 0;
+	struct scene_3d_gltf_error error = {0};
+	bool uses_draco = false;
+
+	if (!model_path || !*model_path)
+		return false;
+
+	if (!parse_json_model(model_path, &root, &glb_bin, &glb_bin_size, &error))
+		goto cleanup;
+
+	uses_draco = model_root_uses_draco_extension(root);
+
+cleanup:
+	obs_data_release(root);
+	bfree(glb_bin);
+	scene_3d_gltf_clear_error(&error);
+	return uses_draco;
 }
 
 bool scene_3d_gltf_load_cpu_payload(const char *model_path, struct scene_3d_cpu_payload *payload,

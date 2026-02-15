@@ -16,7 +16,22 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ******************************************************************************/
 
+/******************************************************************************
+    Modifications Copyright (C) 2026 Uniflow, Inc.
+    Author: Kim Taehyung <gaiaengine@gmail.com>
+    Modified: 2026-02-15
+    Notes: Changes for Syndy Creator Studio.
+******************************************************************************/
+
 uniform texture2d effect_base_color_param;
+uniform float4x4 ViewProj;
+uniform float3 effect_camera_position = {0.0, 0.0, -3.0};
+uniform float4 effect_solid_base_color = {0.72, 0.74, 0.78, 1.0};
+uniform float3 effect_light_direction = {-0.35, -0.65, -0.70};
+uniform float effect_ambient_strength = 0.32;
+uniform float effect_diffuse_strength = 0.82;
+uniform float effect_specular_strength = 0.28;
+uniform float effect_shininess = 24.0;
 
 sampler_state linear_sampler {
 	Filter = Linear;
@@ -26,24 +41,69 @@ sampler_state linear_sampler {
 
 struct VertData {
 	float4 pos : POSITION;
+	float3 normal : NORMAL;
 	float2 uv : TEXCOORD0;
 };
 
-VertData VSDefault(VertData v)
+struct VertDataOut {
+	float4 pos : POSITION;
+	float3 world_pos : TEXCOORD1;
+	float3 normal : TEXCOORD2;
+	float2 uv : TEXCOORD0;
+};
+
+VertDataOut VSDefault(VertData v)
 {
-	return v;
+	VertDataOut v_out;
+	v_out.world_pos = v.pos.xyz;
+	v_out.normal = v.normal;
+	v_out.uv = v.uv;
+	v_out.pos = mul(float4(v.pos.xyz, 1.0), ViewProj);
+	return v_out;
 }
 
-float4 PSDefault(VertData v) : TARGET
+float3 BlinnPhongLight(float3 albedo, float3 normal, float3 world_pos)
 {
-	return effect_base_color_param.Sample(linear_sampler, v.uv);
+	float normal_len_sq = dot(normal, normal);
+	float3 n = normal_len_sq > 1e-6 ? normalize(normal) : float3(0.0, 0.0, 1.0);
+	float3 l = normalize(-effect_light_direction);
+	float3 v = normalize(effect_camera_position - world_pos);
+	float3 h = normalize(l + v);
+	float ndotl = saturate(dot(n, l));
+	float spec = pow(saturate(dot(n, h)), max(effect_shininess, 1.0));
+	float3 ambient = albedo * effect_ambient_strength;
+	float3 diffuse = albedo * (effect_diffuse_strength * ndotl);
+	float3 specular = effect_specular_strength * spec;
+	return ambient + diffuse + specular;
 }
 
-technique Draw
+float4 PSTextured(VertDataOut v) : TARGET
+{
+	float4 base_color = effect_base_color_param.Sample(linear_sampler, v.uv);
+	float3 lit_color = BlinnPhongLight(base_color.rgb, v.normal, v.world_pos);
+	return float4(lit_color, base_color.a);
+}
+
+float4 PSSolid(VertDataOut v) : TARGET
+{
+	float3 lit_color = BlinnPhongLight(effect_solid_base_color.rgb, v.normal, v.world_pos);
+	return float4(lit_color, effect_solid_base_color.a);
+}
+
+technique DrawBlinnPhongTextured
 {
 	pass
 	{
 		vertex_shader = VSDefault(v);
-		pixel_shader = PSDefault(v);
+		pixel_shader = PSTextured(v);
+	}
+}
+
+technique DrawBlinnPhongSolid
+{
+	pass
+	{
+		vertex_shader = VSDefault(v);
+		pixel_shader = PSSolid(v);
 	}
 }
