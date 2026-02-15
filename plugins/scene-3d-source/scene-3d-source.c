@@ -77,6 +77,10 @@ struct scene_3d_source {
 	} pending_upload;
 	uint64_t worker_next_token;
 	uint64_t worker_cancel_token;
+	struct gs_device_loss device_loss_callbacks;
+	bool device_loss_callbacks_registered;
+	volatile bool device_loss_active;
+	volatile bool device_rebuild_pending;
 	bool draco_enabled;
 	bool active;
 	bool showing;
@@ -91,6 +95,63 @@ static const char *scene_3d_source_log_name(const struct scene_3d_source *contex
 		return obs_source_get_name(context->source);
 
 	return "scene_3d_source";
+}
+
+static void scene_3d_source_device_loss_release(void *data)
+{
+	struct scene_3d_source *context = data;
+
+	if (!context)
+		return;
+
+	os_atomic_store_bool(&context->device_loss_active, true);
+	os_atomic_store_bool(&context->device_rebuild_pending, false);
+	blog(LOG_WARNING, "[scene-3d-source: '%s'] Graphics device loss detected.", scene_3d_source_log_name(context));
+}
+
+static void scene_3d_source_device_loss_rebuild(void *device, void *data)
+{
+	struct scene_3d_source *context = data;
+
+	UNUSED_PARAMETER(device);
+
+	if (!context)
+		return;
+
+	os_atomic_store_bool(&context->device_loss_active, false);
+	os_atomic_store_bool(&context->device_rebuild_pending, true);
+	blog(LOG_INFO, "[scene-3d-source: '%s'] Graphics device rebuilt. Scheduling resource refresh.",
+	     scene_3d_source_log_name(context));
+}
+
+static void scene_3d_source_register_device_loss_callbacks(struct scene_3d_source *context)
+{
+	if (!context || context->device_loss_callbacks_registered)
+		return;
+
+	context->device_loss_callbacks.device_loss_release = scene_3d_source_device_loss_release;
+	context->device_loss_callbacks.device_loss_rebuild = scene_3d_source_device_loss_rebuild;
+	context->device_loss_callbacks.data = context;
+
+	obs_enter_graphics();
+	gs_register_loss_callbacks(&context->device_loss_callbacks);
+	obs_leave_graphics();
+
+	context->device_loss_callbacks_registered = true;
+}
+
+static void scene_3d_source_unregister_device_loss_callbacks(struct scene_3d_source *context)
+{
+	if (!context || !context->device_loss_callbacks_registered)
+		return;
+
+	obs_enter_graphics();
+	gs_unregister_loss_callbacks(context);
+	obs_leave_graphics();
+
+	context->device_loss_callbacks_registered = false;
+	os_atomic_store_bool(&context->device_loss_active, false);
+	os_atomic_store_bool(&context->device_rebuild_pending, false);
 }
 
 static void scene_3d_source_refresh_size(struct scene_3d_source *context)
@@ -699,6 +760,9 @@ static void scene_3d_source_process_pending_upload(struct scene_3d_source *conte
 	if (!context)
 		return;
 
+	if (os_atomic_load_bool(&context->device_loss_active))
+		return;
+
 	if (!scene_3d_source_take_pending_upload(context, &payload, &decoded_image, &decoded_image_valid))
 		return;
 
@@ -787,6 +851,7 @@ static void *scene_3d_source_create(obs_data_t *settings, obs_source_t *source)
 		}
 	}
 
+	scene_3d_source_register_device_loss_callbacks(context);
 	scene_3d_source_refresh_size(context);
 	scene_3d_source_update(context, settings);
 	scene_3d_source_load_effect(context);
@@ -797,6 +862,7 @@ static void scene_3d_source_destroy(void *data)
 {
 	struct scene_3d_source *context = data;
 
+	scene_3d_source_unregister_device_loss_callbacks(context);
 	scene_3d_source_stop_worker(context);
 	scene_3d_source_free_worker_job(context);
 	scene_3d_source_release_pending_upload(context);
@@ -841,6 +907,17 @@ static void scene_3d_source_video_tick(void *data, float seconds)
 
 	UNUSED_PARAMETER(seconds);
 
+	if (!context)
+		return;
+
+	if (os_atomic_load_bool(&context->device_rebuild_pending)) {
+		os_atomic_store_bool(&context->device_rebuild_pending, false);
+		os_atomic_store_bool(&context->device_loss_active, false);
+		context->effect_load_attempted = false;
+		scene_3d_source_load_effect(context);
+		scene_3d_source_queue_load_job(context);
+	}
+
 	scene_3d_source_process_pending_upload(context);
 
 	if (!context->effect && !context->effect_load_attempted)
@@ -856,6 +933,9 @@ static void scene_3d_source_render(void *data, gs_effect_t *effect)
 	UNUSED_PARAMETER(effect);
 
 	if (!context)
+		return;
+
+	if (os_atomic_load_bool(&context->device_loss_active))
 		return;
 
 	/* BaseColor is sampled as sRGB and shaded in linear space before output. */
