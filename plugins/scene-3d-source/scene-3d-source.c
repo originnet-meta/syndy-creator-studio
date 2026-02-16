@@ -54,6 +54,7 @@ struct scene_3d_source {
 	obs_source_t *source;
 	gs_effect_t *effect;
 	gs_eparam_t *effect_base_color_param;
+	gs_eparam_t *effect_has_base_color_texture_param;
 	gs_eparam_t *effect_camera_position_param;
 	gs_eparam_t *effect_light_direction_param;
 	gs_eparam_t *effect_ambient_strength_param;
@@ -64,11 +65,13 @@ struct scene_3d_source {
 	char *draco_decoder;
 	gs_vertbuffer_t *vertex_buffer;
 	gs_indexbuffer_t *index_buffer;
+	gs_indexbuffer_t *wireframe_index_buffer;
 	gs_vertbuffer_t *bounds_line_buffer;
 	gs_texrender_t *model_texrender;
 	gs_image_file4_t base_color_image;
 	size_t draw_vertex_count;
 	size_t draw_index_count;
+	size_t wireframe_index_count;
 	bool base_color_image_valid;
 	pthread_t worker_thread;
 	pthread_mutex_t worker_mutex;
@@ -900,6 +903,7 @@ static void scene_3d_source_unload_effect(struct scene_3d_source *context)
 
 	context->effect = NULL;
 	context->effect_base_color_param = NULL;
+	context->effect_has_base_color_texture_param = NULL;
 	context->effect_camera_position_param = NULL;
 	context->effect_light_direction_param = NULL;
 	context->effect_ambient_strength_param = NULL;
@@ -928,10 +932,12 @@ static void scene_3d_source_load_effect(struct scene_3d_source *context)
 	obs_enter_graphics();
 	context->effect = gs_effect_create_from_file(effect_path, NULL);
 	if (context->effect) {
-		gs_technique_t *textured_tech = gs_effect_get_technique(context->effect, "DrawBlinnPhongTextured");
-		gs_technique_t *solid_tech = gs_effect_get_technique(context->effect, "DrawBlinnPhongSolid");
+		gs_technique_t *fill_tech = gs_effect_get_technique(context->effect, "DrawBlinnPhongWireframe");
+		gs_technique_t *wire_tech = gs_effect_get_technique(context->effect, "DrawWireframe");
 
 		context->effect_base_color_param = gs_effect_get_param_by_name(context->effect, "effect_base_color_param");
+		context->effect_has_base_color_texture_param =
+			gs_effect_get_param_by_name(context->effect, "effect_has_base_color_texture");
 		context->effect_camera_position_param =
 			gs_effect_get_param_by_name(context->effect, "effect_camera_position");
 		context->effect_light_direction_param =
@@ -946,11 +952,12 @@ static void scene_3d_source_load_effect(struct scene_3d_source *context)
 
 		blog(LOG_INFO,
 		     "[scene-3d-source: '%s'] Effect loaded: base_color_param=%s, camera_param=%s, "
-		     "light_dir_param=%s, tech_textured=%s, tech_solid=%s",
+		     "light_dir_param=%s, has_base_color_param=%s, tech_fill=%s, tech_wire=%s",
 		     scene_3d_source_log_name(context), context->effect_base_color_param ? "yes" : "no",
 		     context->effect_camera_position_param ? "yes" : "no",
-		     context->effect_light_direction_param ? "yes" : "no", textured_tech ? "yes" : "no",
-		     solid_tech ? "yes" : "no");
+		     context->effect_light_direction_param ? "yes" : "no",
+		     context->effect_has_base_color_texture_param ? "yes" : "no", fill_tech ? "yes" : "no",
+		     wire_tech ? "yes" : "no");
 	}
 	obs_leave_graphics();
 
@@ -1090,6 +1097,11 @@ static void scene_3d_source_release_gpu_resources(struct scene_3d_source *contex
 		context->index_buffer = NULL;
 	}
 
+	if (context->wireframe_index_buffer) {
+		gs_indexbuffer_destroy(context->wireframe_index_buffer);
+		context->wireframe_index_buffer = NULL;
+	}
+
 	if (context->bounds_line_buffer) {
 		gs_vertexbuffer_destroy(context->bounds_line_buffer);
 		context->bounds_line_buffer = NULL;
@@ -1107,6 +1119,7 @@ static void scene_3d_source_release_gpu_resources(struct scene_3d_source *contex
 
 	context->draw_vertex_count = 0;
 	context->draw_index_count = 0;
+	context->wireframe_index_count = 0;
 	context->diagnostics_logged_draw = false;
 }
 
@@ -1236,7 +1249,8 @@ static gs_texture_t *scene_3d_source_render_model_to_texture(struct scene_3d_sou
 	bool camera_valid = false;
 	const bool has_base_color_texture =
 		context->base_color_image_valid && context->base_color_image.image3.image2.image.texture != NULL;
-	const char *technique = has_base_color_texture ? "DrawBlinnPhongTextured" : "DrawBlinnPhongSolid";
+	const char *fill_technique = "DrawBlinnPhongWireframe";
+	const char *wireframe_technique = "DrawWireframe";
 	enum gs_cull_mode previous_cull_mode;
 
 	if (!context || !context->effect || !context->vertex_buffer)
@@ -1263,8 +1277,11 @@ static gs_texture_t *scene_3d_source_render_model_to_texture(struct scene_3d_sou
 		return NULL;
 
 	if (!context->diagnostics_logged_draw) {
-		blog(LOG_INFO, "[scene-3d-source: '%s'] Render path active: technique=%s, indices=%zu, vertices=%zu",
-		     scene_3d_source_log_name(context), technique, context->draw_index_count, context->draw_vertex_count);
+		blog(LOG_INFO,
+		     "[scene-3d-source: '%s'] Render path active: fill=%s, wire=%s, indices=%zu, wire_indices=%zu, "
+		     "vertices=%zu",
+		     scene_3d_source_log_name(context), fill_technique, wireframe_technique, context->draw_index_count,
+		     context->wireframe_index_count, context->draw_vertex_count);
 		context->diagnostics_logged_draw = true;
 	}
 
@@ -1293,6 +1310,8 @@ static gs_texture_t *scene_3d_source_render_model_to_texture(struct scene_3d_sou
 		else
 			gs_effect_set_texture(context->effect_base_color_param, NULL);
 	}
+	if (context->effect_has_base_color_texture_param)
+		gs_effect_set_float(context->effect_has_base_color_texture_param, has_base_color_texture ? 1.0f : 0.0f);
 	if (context->effect_camera_position_param)
 		gs_effect_set_vec3(context->effect_camera_position_param, &camera_position);
 	if (context->effect_light_direction_param)
@@ -1311,8 +1330,17 @@ static gs_texture_t *scene_3d_source_render_model_to_texture(struct scene_3d_sou
 
 	gs_load_vertexbuffer(context->vertex_buffer);
 	gs_load_indexbuffer(context->index_buffer);
-	while (gs_effect_loop(context->effect, technique))
+	while (gs_effect_loop(context->effect, fill_technique))
 		gs_draw(GS_TRIS, 0, context->index_buffer ? 0 : (uint32_t)context->draw_vertex_count);
+
+	if (context->wireframe_index_buffer && context->wireframe_index_count > 0) {
+		gs_depth_function(GS_LEQUAL);
+		gs_load_indexbuffer(context->wireframe_index_buffer);
+		while (gs_effect_loop(context->effect, wireframe_technique))
+			gs_draw(GS_LINES, 0, 0);
+		gs_depth_function(GS_LESS);
+	}
+
 	gs_load_indexbuffer(NULL);
 	gs_load_vertexbuffer(NULL);
 	gs_set_cull_mode(previous_cull_mode);
@@ -1490,20 +1518,24 @@ static void scene_3d_source_upload_pending_payload(struct scene_3d_source *conte
 	struct gs_vb_data *vb_data = NULL;
 	gs_vertbuffer_t *new_vertex_buffer = NULL;
 	gs_indexbuffer_t *new_index_buffer = NULL;
+	gs_indexbuffer_t *new_wireframe_index_buffer = NULL;
 	struct vec3 bounds_min = {0};
 	struct vec3 bounds_max = {0};
 	size_t mesh_idx;
 	size_t primitive_idx;
 	size_t total_vertices = 0;
 	size_t total_indices = 0;
+	size_t total_wireframe_indices = 0;
 	size_t vertex_offset = 0;
 	size_t index_offset = 0;
+	size_t wireframe_index_offset = 0;
 	size_t uploaded_primitives = 0;
 	bool bounds_valid = false;
 	struct vec3 *points;
 	struct vec3 *normals;
 	struct vec2 *uvs;
 	uint32_t *flat_indices = NULL;
+	uint32_t *flat_wireframe_indices = NULL;
 
 	if (!context || !payload)
 		return;
@@ -1514,6 +1546,7 @@ static void scene_3d_source_upload_pending_payload(struct scene_3d_source *conte
 		for (primitive_idx = 0; primitive_idx < mesh->primitive_count; primitive_idx++) {
 			const struct scene_3d_cpu_primitive_payload *primitive = mesh->primitives + primitive_idx;
 			size_t primitive_index_count;
+			size_t primitive_triangle_count;
 			struct vec3 primitive_bounds_min;
 			struct vec3 primitive_bounds_max;
 
@@ -1523,9 +1556,13 @@ static void scene_3d_source_upload_pending_payload(struct scene_3d_source *conte
 			primitive_index_count = primitive->index_count ? primitive->index_count : primitive->vertex_count;
 			if (primitive_index_count == 0)
 				continue;
+			primitive_triangle_count = primitive_index_count / 3;
+			if (primitive_triangle_count == 0)
+				continue;
 
 			if (total_vertices > SIZE_MAX - primitive->vertex_count ||
-			    total_indices > SIZE_MAX - primitive_index_count) {
+			    total_indices > SIZE_MAX - primitive_index_count ||
+			    total_wireframe_indices > SIZE_MAX - (primitive_triangle_count * 6)) {
 				blog(LOG_WARNING,
 				     "[scene-3d-source: '%s'] Primitive accumulation overflow at mesh[%zu] primitive[%zu].",
 				     scene_3d_source_log_name(context), mesh_idx, primitive_idx);
@@ -1534,6 +1571,7 @@ static void scene_3d_source_upload_pending_payload(struct scene_3d_source *conte
 
 			total_vertices += primitive->vertex_count;
 			total_indices += primitive_index_count;
+			total_wireframe_indices += primitive_triangle_count * 6;
 
 			if (scene_3d_source_compute_primitive_bounds(primitive, &primitive_bounds_min, &primitive_bounds_max)) {
 				if (!bounds_valid) {
@@ -1572,6 +1610,7 @@ static void scene_3d_source_upload_pending_payload(struct scene_3d_source *conte
 	vb_data->tvarray[0].width = 2;
 	vb_data->tvarray[0].array = bmalloc(sizeof(struct vec2) * total_vertices);
 	flat_indices = bmalloc(sizeof(uint32_t) * total_indices);
+	flat_wireframe_indices = total_wireframe_indices ? bmalloc(sizeof(uint32_t) * total_wireframe_indices) : NULL;
 
 	points = vb_data->points;
 	normals = vb_data->normals;
@@ -1585,9 +1624,11 @@ static void scene_3d_source_upload_pending_payload(struct scene_3d_source *conte
 			const size_t primitive_vertex_count = primitive->vertex_count;
 			const size_t primitive_index_count =
 				primitive->index_count ? primitive->index_count : primitive->vertex_count;
+			const size_t primitive_triangle_count = primitive_index_count / 3;
 			size_t i;
 
-			if (!primitive->positions || primitive_vertex_count == 0 || primitive_index_count == 0)
+			if (!primitive->positions || primitive_vertex_count == 0 || primitive_index_count == 0 ||
+			    primitive_triangle_count == 0)
 				continue;
 
 			for (i = 0; i < primitive_vertex_count; i++) {
@@ -1641,6 +1682,29 @@ static void scene_3d_source_upload_pending_payload(struct scene_3d_source *conte
 				flat_indices[index_offset + i] = (uint32_t)(vertex_offset + (size_t)local_index);
 			}
 
+			if ((primitive_index_count % 3) != 0) {
+				blog(LOG_WARNING,
+				     "[scene-3d-source: '%s'] Primitive index count is not divisible by 3 at "
+				     "mesh[%zu] primitive[%zu] (indices=%zu). Trailing indices are ignored for "
+				     "wireframe.",
+				     scene_3d_source_log_name(context), mesh_idx, primitive_idx, primitive_index_count);
+			}
+
+			for (i = 0; i < primitive_triangle_count; i++) {
+				const size_t tri_index = index_offset + (i * 3);
+				const uint32_t idx0 = flat_indices[tri_index + 0];
+				const uint32_t idx1 = flat_indices[tri_index + 1];
+				const uint32_t idx2 = flat_indices[tri_index + 2];
+
+				flat_wireframe_indices[wireframe_index_offset + 0] = idx0;
+				flat_wireframe_indices[wireframe_index_offset + 1] = idx1;
+				flat_wireframe_indices[wireframe_index_offset + 2] = idx1;
+				flat_wireframe_indices[wireframe_index_offset + 3] = idx2;
+				flat_wireframe_indices[wireframe_index_offset + 4] = idx2;
+				flat_wireframe_indices[wireframe_index_offset + 5] = idx0;
+				wireframe_index_offset += 6;
+			}
+
 			vertex_offset += primitive_vertex_count;
 			index_offset += primitive_index_count;
 			uploaded_primitives++;
@@ -1658,6 +1722,7 @@ static void scene_3d_source_upload_pending_payload(struct scene_3d_source *conte
 		     scene_3d_source_log_name(context));
 		gs_vbdata_destroy(vb_data);
 		bfree(flat_indices);
+		bfree(flat_wireframe_indices);
 		return;
 	}
 
@@ -1672,11 +1737,23 @@ static void scene_3d_source_upload_pending_payload(struct scene_3d_source *conte
 		if (!new_index_buffer) {
 			gs_vertexbuffer_destroy(new_vertex_buffer);
 			new_vertex_buffer = NULL;
+		} else if (wireframe_index_offset > 0) {
+			new_wireframe_index_buffer =
+				gs_indexbuffer_create(GS_UNSIGNED_LONG, flat_wireframe_indices, wireframe_index_offset,
+						      GS_DUP_BUFFER);
+			if (!new_wireframe_index_buffer) {
+				gs_indexbuffer_destroy(new_index_buffer);
+				new_index_buffer = NULL;
+				gs_vertexbuffer_destroy(new_vertex_buffer);
+				new_vertex_buffer = NULL;
+			}
 		}
 	}
 
 	bfree(flat_indices);
 	flat_indices = NULL;
+	bfree(flat_wireframe_indices);
+	flat_wireframe_indices = NULL;
 
 	if (new_vertex_buffer) {
 		if (decoded_image_valid)
@@ -1686,8 +1763,10 @@ static void scene_3d_source_upload_pending_payload(struct scene_3d_source *conte
 
 		context->vertex_buffer = new_vertex_buffer;
 		context->index_buffer = new_index_buffer;
+		context->wireframe_index_buffer = new_wireframe_index_buffer;
 		context->draw_vertex_count = vertex_offset;
 		context->draw_index_count = index_offset;
+		context->wireframe_index_count = wireframe_index_offset;
 
 		if (decoded_image_valid && decoded_image->image3.image2.image.texture) {
 			context->base_color_image = *decoded_image;
@@ -1710,9 +1789,10 @@ static void scene_3d_source_upload_pending_payload(struct scene_3d_source *conte
 		if (!context->diagnostics_logged_upload) {
 			blog(LOG_INFO,
 			     "[scene-3d-source: '%s'] GPU upload complete: primitives=%zu, vertices=%zu, indices=%zu, "
-			     "texture=%s",
+			     "wire_indices=%zu, texture=%s",
 			     scene_3d_source_log_name(context), uploaded_primitives, context->draw_vertex_count,
-			     context->draw_index_count, context->base_color_image_valid ? "yes" : "no");
+			     context->draw_index_count, context->wireframe_index_count,
+			     context->base_color_image_valid ? "yes" : "no");
 			context->diagnostics_logged_upload = true;
 		}
 	} else {

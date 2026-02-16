@@ -27,6 +27,8 @@ uniform texture2d effect_base_color_param;
 uniform float4x4 ViewProj;
 uniform float3 effect_camera_position = {0.0, 0.0, -3.0};
 uniform float4 effect_solid_base_color = {0.72, 0.74, 0.78, 1.0};
+uniform float effect_has_base_color_texture = 0.0;
+uniform float4 effect_wireframe_color = {0.0, 0.0, 0.0, 1.0};
 uniform float3 effect_light_direction = {-0.35, -0.65, -0.70};
 uniform float effect_ambient_strength = 0.32;
 uniform float effect_diffuse_strength = 0.82;
@@ -77,33 +79,40 @@ float3 BlinnPhongLight(float3 albedo, float3 normal, float3 world_pos)
 	return ambient + diffuse + specular;
 }
 
-float4 PSTextured(VertDataOut v) : TARGET
+float4 ResolveBaseColor(VertDataOut v)
 {
-	float4 base_color = effect_base_color_param.Sample(linear_sampler, v.uv);
+	const float use_texture = saturate(effect_has_base_color_texture);
+	float4 sampled_color = effect_base_color_param.Sample(linear_sampler, v.uv);
+	return lerp(effect_solid_base_color, sampled_color, use_texture);
+}
+
+float4 PSBlinnPhongWireframe(VertDataOut v) : TARGET
+{
+	float4 base_color = ResolveBaseColor(v);
 	float3 lit_color = BlinnPhongLight(base_color.rgb, v.normal, v.world_pos);
 	return float4(lit_color, base_color.a);
 }
 
-float4 PSSolid(VertDataOut v) : TARGET
+float4 PSWireframe(VertDataOut v) : TARGET
 {
-	float3 lit_color = BlinnPhongLight(effect_solid_base_color.rgb, v.normal, v.world_pos);
-	return float4(lit_color, effect_solid_base_color.a);
+	v.uv += 0.0;
+	return effect_wireframe_color;
 }
 
-technique DrawBlinnPhongTextured
+technique DrawBlinnPhongWireframe
 {
 	pass
 	{
 		vertex_shader = VSDefault(v);
-		pixel_shader = PSTextured(v);
+		pixel_shader = PSBlinnPhongWireframe(v);
 	}
 }
 
-technique DrawBlinnPhongSolid
+technique DrawWireframe
 {
 	pass
 	{
 		vertex_shader = VSDefault(v);
-		pixel_shader = PSSolid(v);
+		pixel_shader = PSWireframe(v);
 	}
 }
