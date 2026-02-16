@@ -1,3 +1,10 @@
+/******************************************************************************
+    Modifications Copyright (C) 2026 Uniflow, Inc.
+    Author: Kim Taehyung <gaiaengine@gmail.com>
+    Modified: 2026-02-16
+    Notes: Changes for Syndy Creator Studio.
+******************************************************************************/
+
 #include "SourceTreeItem.hpp"
 
 #include <components/OBSSourceLabel.hpp>
@@ -284,7 +291,13 @@ void SourceTreeItem::mouseDoubleClickEvent(QMouseEvent *event)
 	} else {
 		obs_source_t *source = obs_sceneitem_get_source(sceneitem);
 		OBSBasic *main = OBSBasic::Get();
-		if (obs_source_configurable(source)) {
+		const char *id = obs_source_get_unversioned_id(source);
+		const uint32_t flags = obs_source_get_output_flags(source);
+		const bool is_scene_3d_source = id && strcmp(id, "scene_3d_source") == 0;
+		const bool can_interact = (flags & OBS_SOURCE_INTERACTION) != 0;
+		const bool open_interaction = is_scene_3d_source && can_interact;
+
+		if (open_interaction || obs_source_configurable(source)) {
 #if defined(_WIN32)
 			/* This timer works around a bug introduced around Qt 6.8.3 that causes
 			 * the application to hang when double clicking the sources list and the
@@ -294,12 +307,23 @@ void SourceTreeItem::mouseDoubleClickEvent(QMouseEvent *event)
 			SystemParametersInfo(SPI_GETSNAPTODEFBUTTON, 0, &snapEnabled, 0);
 
 			if (snapEnabled) {
-				QTimer::singleShot(200, this, [=]() { main->CreatePropertiesWindow(source); });
+				QTimer::singleShot(200, this, [=]() {
+					if (open_interaction)
+						main->CreateInteractionWindow(source);
+					else
+						main->CreatePropertiesWindow(source);
+				});
 			} else {
-				main->CreatePropertiesWindow(source);
+				if (open_interaction)
+					main->CreateInteractionWindow(source);
+				else
+					main->CreatePropertiesWindow(source);
 			}
 #else
-			main->CreatePropertiesWindow(source);
+			if (open_interaction)
+				main->CreateInteractionWindow(source);
+			else
+				main->CreatePropertiesWindow(source);
 #endif
 		}
 	}

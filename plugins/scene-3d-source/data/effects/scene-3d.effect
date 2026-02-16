@@ -19,15 +19,14 @@
 /******************************************************************************
     Modifications Copyright (C) 2026 Uniflow, Inc.
     Author: Kim Taehyung <gaiaengine@gmail.com>
-    Modified: 2026-02-15
+    Modified: 2026-02-16
     Notes: Changes for Syndy Creator Studio.
 ******************************************************************************/
 
 uniform texture2d effect_base_color_param;
 uniform float4x4 ViewProj;
 uniform float3 effect_camera_position = {0.0, 0.0, -3.0};
-uniform float4 effect_solid_base_color = {0.72, 0.74, 0.78, 1.0};
-uniform float effect_has_base_color_texture = 0.0;
+uniform float4 effect_solid_base_color = {0.36, 0.36, 0.38, 1.0};
 uniform float4 effect_wireframe_color = {0.0, 0.0, 0.0, 1.0};
 uniform float3 effect_light_direction = {-0.35, -0.65, -0.70};
 uniform float effect_ambient_strength = 0.32;
@@ -81,9 +80,8 @@ float3 BlinnPhongLight(float3 albedo, float3 normal, float3 world_pos)
 
 float4 ResolveBaseColor(VertDataOut v)
 {
-	const float use_texture = saturate(effect_has_base_color_texture);
-	float4 sampled_color = effect_base_color_param.Sample(linear_sampler, v.uv);
-	return lerp(effect_solid_base_color, sampled_color, use_texture);
+	v.uv += 0.0;
+	return effect_solid_base_color;
 }
 
 float4 PSBlinnPhongWireframe(VertDataOut v) : TARGET

@@ -18,7 +18,7 @@
 /******************************************************************************
     Modifications Copyright (C) 2026 Uniflow, Inc.
     Author: Kim Taehyung <gaiaengine@gmail.com>
-    Modified: 2026-02-15
+    Modified: 2026-02-16
     Notes: Changes for Syndy Creator Studio.
 ******************************************************************************/
 
@@ -63,6 +63,22 @@ struct Scene3DCameraBasis {
 	float forward_z;
 };
 
+struct Scene3DCameraState {
+	bool available;
+	float camera_x;
+	float camera_y;
+	float camera_z;
+	float target_x;
+	float target_y;
+	float target_z;
+	float up_x;
+	float up_y;
+	float up_z;
+	float fov_deg;
+	float znear;
+	float zfar;
+};
+
 struct GizmoAxis {
 	char label;
 	float screen_x;
@@ -70,6 +86,8 @@ struct GizmoAxis {
 	float depth;
 	struct vec4 color;
 };
+
+static void DrawGizmoLine(float x1, float y1, float x2, float y2, float thickness);
 
 static float VecLength(float x, float y, float z)
 {
@@ -146,6 +164,213 @@ static bool GetScene3DCameraBasis(obs_source_t *source, Scene3DCameraBasis &basi
 
 	NormalizeCameraBasis(basis);
 	return true;
+}
+
+static bool GetScene3DCameraState(obs_source_t *source, Scene3DCameraState &state)
+{
+	proc_handler_t *proc_handler = nullptr;
+	calldata_t cd = {};
+	bool success = false;
+
+	state = {false, 0.0f, 0.0f, -3.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 50.0f, 0.1f, 100.0f};
+
+	if (!source || !IsScene3DSource(source))
+		return false;
+
+	proc_handler = obs_source_get_proc_handler(source);
+	if (!proc_handler)
+		return false;
+
+	success = proc_handler_call(proc_handler, "get_scene_3d_camera_state", &cd);
+	if (!success) {
+		calldata_free(&cd);
+		return false;
+	}
+
+	if (!calldata_bool(&cd, "available")) {
+		calldata_free(&cd);
+		return false;
+	}
+
+	state.available = true;
+	state.camera_x = (float)calldata_float(&cd, "camera_x");
+	state.camera_y = (float)calldata_float(&cd, "camera_y");
+	state.camera_z = (float)calldata_float(&cd, "camera_z");
+	state.target_x = (float)calldata_float(&cd, "target_x");
+	state.target_y = (float)calldata_float(&cd, "target_y");
+	state.target_z = (float)calldata_float(&cd, "target_z");
+	state.up_x = (float)calldata_float(&cd, "up_x");
+	state.up_y = (float)calldata_float(&cd, "up_y");
+	state.up_z = (float)calldata_float(&cd, "up_z");
+	state.fov_deg = (float)calldata_float(&cd, "fov_deg");
+	state.znear = (float)calldata_float(&cd, "znear");
+	state.zfar = (float)calldata_float(&cd, "zfar");
+	calldata_free(&cd);
+
+	return true;
+}
+
+static bool ProjectScene3DPointToScreen(const Scene3DCameraState &state, uint32_t source_cx, uint32_t source_cy,
+					float world_x, float world_y, float world_z, float &screen_x, float &screen_y)
+{
+	float forward_x = state.target_x - state.camera_x;
+	float forward_y = state.target_y - state.camera_y;
+	float forward_z = state.target_z - state.camera_z;
+	float up_x = state.up_x;
+	float up_y = state.up_y;
+	float up_z = state.up_z;
+	float right_x;
+	float right_y;
+	float right_z;
+	float view_x;
+	float view_y;
+	float view_z;
+	float dx;
+	float dy;
+	float dz;
+	float tan_half_fov;
+	float aspect;
+	float ndc_x;
+	float ndc_y;
+	const float pi = 3.14159265358979323846f;
+
+	if (!state.available || source_cx == 0 || source_cy == 0)
+		return false;
+
+	NormalizeVec3(forward_x, forward_y, forward_z, 0.0f, 0.0f, -1.0f);
+	NormalizeVec3(up_x, up_y, up_z, 0.0f, 1.0f, 0.0f);
+
+	right_x = forward_y * up_z - forward_z * up_y;
+	right_y = forward_z * up_x - forward_x * up_z;
+	right_z = forward_x * up_y - forward_y * up_x;
+	NormalizeVec3(right_x, right_y, right_z, 1.0f, 0.0f, 0.0f);
+
+	up_x = right_y * forward_z - right_z * forward_y;
+	up_y = right_z * forward_x - right_x * forward_z;
+	up_z = right_x * forward_y - right_y * forward_x;
+	NormalizeVec3(up_x, up_y, up_z, 0.0f, 1.0f, 0.0f);
+
+	dx = world_x - state.camera_x;
+	dy = world_y - state.camera_y;
+	dz = world_z - state.camera_z;
+
+	view_x = dx * right_x + dy * right_y + dz * right_z;
+	view_y = dx * up_x + dy * up_y + dz * up_z;
+	view_z = dx * forward_x + dy * forward_y + dz * forward_z;
+
+	if (view_z <= fmaxf(state.znear * 0.25f, 0.001f))
+		return false;
+
+	aspect = (float)source_cx / (float)source_cy;
+	tan_half_fov = tanf((state.fov_deg * pi / 180.0f) * 0.5f);
+	if (tan_half_fov < 0.001f)
+		tan_half_fov = 0.001f;
+
+	ndc_x = view_x / (view_z * tan_half_fov * fmaxf(aspect, 0.1f));
+	ndc_y = view_y / (view_z * tan_half_fov);
+
+	if (!isfinite(ndc_x) || !isfinite(ndc_y))
+		return false;
+
+	screen_x = (ndc_x * 0.5f + 0.5f) * (float)source_cx;
+	screen_y = (0.5f - ndc_y * 0.5f) * (float)source_cy;
+
+	return true;
+}
+
+static bool LineIntersectsSourceRect(float x0, float y0, float x1, float y1, float width, float height)
+{
+	if ((x0 < 0.0f && x1 < 0.0f) || (x0 > width && x1 > width))
+		return false;
+	if ((y0 < 0.0f && y1 < 0.0f) || (y0 > height && y1 > height))
+		return false;
+
+	return true;
+}
+
+static void DrawScene3DGrid(obs_source_t *source, uint32_t source_cx, uint32_t source_cy)
+{
+	Scene3DCameraState state = {};
+	gs_effect_t *solid = nullptr;
+	gs_eparam_t *color_param = nullptr;
+	struct vec4 x_axis_color;
+	struct vec4 z_axis_color;
+	struct vec4 grid_color;
+	float camera_distance;
+	float raw_step;
+	float step_power2;
+	float grid_step;
+	const int half_lines = 48;
+	float grid_extent;
+	const float axis_thickness = 2.0f;
+	const float line_thickness = 1.0f;
+	int index;
+
+	if (!source || !IsScene3DSource(source))
+		return;
+	if (!GetScene3DCameraState(source, state))
+		return;
+
+	solid = obs_get_base_effect(OBS_EFFECT_SOLID);
+	color_param = solid ? gs_effect_get_param_by_name(solid, "color") : nullptr;
+	if (!solid || !color_param)
+		return;
+
+	camera_distance = VecLength(state.camera_x, state.camera_y, state.camera_z);
+	if (camera_distance < 1.0f)
+		camera_distance = 1.0f;
+	raw_step = camera_distance / 18.0f;
+	step_power2 = powf(2.0f, floorf(log2f(fmaxf(raw_step, 0.25f))));
+	grid_step = fmaxf(step_power2, 0.25f);
+	grid_extent = grid_step * (float)half_lines;
+
+	vec4_set(&x_axis_color, 0.95f, 0.32f, 0.32f, 0.92f);
+	vec4_set(&z_axis_color, 0.38f, 0.55f, 0.98f, 0.92f);
+	vec4_set(&grid_color, 0.52f, 0.52f, 0.52f, 0.68f);
+
+	gs_blend_state_push();
+	gs_enable_blending(true);
+	gs_blend_function(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA);
+
+	for (index = -half_lines; index <= half_lines; index++) {
+		const float x = (float)index * grid_step;
+		float x0;
+		float y0;
+		float x1;
+		float y1;
+
+		if (!ProjectScene3DPointToScreen(state, source_cx, source_cy, x, 0.0f, -grid_extent, x0, y0))
+			continue;
+		if (!ProjectScene3DPointToScreen(state, source_cx, source_cy, x, 0.0f, grid_extent, x1, y1))
+			continue;
+		if (!LineIntersectsSourceRect(x0, y0, x1, y1, (float)source_cx, (float)source_cy))
+			continue;
+
+		gs_effect_set_vec4(color_param, index == 0 ? &z_axis_color : &grid_color);
+		while (gs_effect_loop(solid, "Solid"))
+			DrawGizmoLine(x0, y0, x1, y1, index == 0 ? axis_thickness : line_thickness);
+	}
+
+	for (index = -half_lines; index <= half_lines; index++) {
+		const float z = (float)index * grid_step;
+		float x0;
+		float y0;
+		float x1;
+		float y1;
+
+		if (!ProjectScene3DPointToScreen(state, source_cx, source_cy, -grid_extent, 0.0f, z, x0, y0))
+			continue;
+		if (!ProjectScene3DPointToScreen(state, source_cx, source_cy, grid_extent, 0.0f, z, x1, y1))
+			continue;
+		if (!LineIntersectsSourceRect(x0, y0, x1, y1, (float)source_cx, (float)source_cy))
+			continue;
+
+		gs_effect_set_vec4(color_param, index == 0 ? &x_axis_color : &grid_color);
+		while (gs_effect_loop(solid, "Solid"))
+			DrawGizmoLine(x0, y0, x1, y1, index == 0 ? axis_thickness : line_thickness);
+	}
+
+	gs_blend_state_pop();
 }
 
 static void DrawGizmoLine(float x1, float y1, float x2, float y2, float thickness)
@@ -414,6 +639,9 @@ void OBSBasicInteraction::SourceRenamed(void *data, calldata_t *params)
 void OBSBasicInteraction::DrawPreview(void *data, uint32_t cx, uint32_t cy)
 {
 	OBSBasicInteraction *window = static_cast<OBSBasicInteraction *>(data);
+	gs_effect_t *solid = nullptr;
+	gs_eparam_t *color = nullptr;
+	struct vec4 background_color;
 
 	if (!window->source)
 		return;
@@ -433,6 +661,17 @@ void OBSBasicInteraction::DrawPreview(void *data, uint32_t cx, uint32_t cy)
 	gs_viewport_push();
 	gs_projection_push();
 	const bool previous = gs_set_linear_srgb(true);
+
+	solid = obs_get_base_effect(OBS_EFFECT_SOLID);
+	color = solid ? gs_effect_get_param_by_name(solid, "color") : nullptr;
+	if (solid && color) {
+		vec4_from_rgba_srgb(&background_color, 0xFF101010);
+		gs_ortho(0.0f, float(cx), 0.0f, float(cy), -100.0f, 100.0f);
+		gs_set_viewport(0, 0, (int)cx, (int)cy);
+		gs_effect_set_vec4(color, &background_color);
+		while (gs_effect_loop(solid, "Solid"))
+			gs_draw_sprite(nullptr, 0, cx, cy);
+	}
 
 	gs_ortho(0.0f, float(sourceCX), 0.0f, float(sourceCY), -100.0f, 100.0f);
 	gs_set_viewport(x, y, newCX, newCY);

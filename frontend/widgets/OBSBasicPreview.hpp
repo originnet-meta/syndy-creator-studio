@@ -1,3 +1,10 @@
+/******************************************************************************
+    Modifications Copyright (C) 2026 Uniflow, Inc.
+    Author: Kim Taehyung <gaiaengine@gmail.com>
+    Modified: 2026-02-16
+    Notes: Changes for Syndy Creator Studio.
+******************************************************************************/
+
 #pragma once
 
 #include "OBSQTDisplay.hpp"
@@ -134,6 +141,7 @@ public:
 	virtual void wheelEvent(QWheelEvent *event) override;
 
 	virtual void mousePressEvent(QMouseEvent *event) override;
+	virtual void mouseDoubleClickEvent(QMouseEvent *event) override;
 	virtual void mouseReleaseEvent(QMouseEvent *event) override;
 	virtual void mouseMoveEvent(QMouseEvent *event) override;
 	virtual void leaveEvent(QEvent *event) override;

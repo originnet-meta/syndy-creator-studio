@@ -19,7 +19,7 @@
 /******************************************************************************
     Modifications Copyright (C) 2026 Uniflow, Inc.
     Author: Kim Taehyung <gaiaengine@gmail.com>
-    Modified: 2026-02-15
+    Modified: 2026-02-16
     Notes: Changes for Syndy Creator Studio.
 ******************************************************************************/
 
@@ -54,7 +54,6 @@ struct scene_3d_source {
 	obs_source_t *source;
 	gs_effect_t *effect;
 	gs_eparam_t *effect_base_color_param;
-	gs_eparam_t *effect_has_base_color_texture_param;
 	gs_eparam_t *effect_camera_position_param;
 	gs_eparam_t *effect_light_direction_param;
 	gs_eparam_t *effect_ambient_strength_param;
@@ -176,6 +175,9 @@ static void scene_3d_source_update_camera_clip_locked(struct scene_3d_source *co
 {
 	float extent_max;
 	float half_depth = 1.0f;
+	float near_margin;
+	float far_margin;
+	float grid_far_plane;
 	float near_plane;
 	float far_plane;
 
@@ -186,34 +188,25 @@ static void scene_3d_source_update_camera_clip_locked(struct scene_3d_source *co
 	if (context->model_bounds_valid)
 		half_depth = fabsf(context->model_bounds_max.z - context->model_bounds_min.z) * 0.5f;
 
-	near_plane = context->camera_orbit_distance - (half_depth + extent_max * 0.75f);
-	if (near_plane < 0.01f)
-		near_plane = 0.01f;
+	/*
+	 * Keep clip planes broad enough for world-grid visibility in the interact
+	 * viewport while preserving reasonable depth precision for model rendering.
+	 */
+	near_margin = half_depth + extent_max * 2.5f;
+	far_margin = half_depth + extent_max * 2.5f;
+	near_plane = context->camera_orbit_distance - near_margin;
+	if (near_plane < 0.05f)
+		near_plane = 0.05f;
 
-	far_plane = context->camera_orbit_distance + (half_depth + extent_max * 2.0f);
-	if (far_plane < near_plane + 1.0f)
-		far_plane = near_plane + 1.0f;
+	far_plane = context->camera_orbit_distance + far_margin;
+	grid_far_plane = context->camera_orbit_distance + fmaxf(extent_max * 40.0f, 64.0f);
+	if (far_plane < grid_far_plane)
+		far_plane = grid_far_plane;
+	if (far_plane < near_plane + 10.0f)
+		far_plane = near_plane + 10.0f;
 
 	context->default_camera_znear = near_plane;
 	context->default_camera_zfar = far_plane;
-}
-
-static void scene_3d_source_rotate_vec3_axis(struct vec3 *vector, const struct vec3 *axis, float angle_rad)
-{
-	struct vec3 axis_normalized;
-	struct matrix4 rotation;
-
-	if (!vector || !axis)
-		return;
-
-	axis_normalized = *axis;
-	if (vec3_len(&axis_normalized) <= 0.0001f)
-		return;
-	vec3_norm(&axis_normalized, &axis_normalized);
-
-	matrix4_identity(&rotation);
-	matrix4_rotate_aa4f(&rotation, &rotation, axis_normalized.x, axis_normalized.y, axis_normalized.z, angle_rad);
-	vec3_transform(vector, vector, &rotation);
 }
 
 static void scene_3d_source_get_camera_basis_locked(const struct scene_3d_source *context, struct vec3 *forward,
@@ -233,16 +226,8 @@ static void scene_3d_source_get_camera_basis_locked(const struct scene_3d_source
 	else
 		vec3_norm(&basis_forward, &basis_forward);
 
-	/*
-	 * Keep the default camera aligned with scene-3d world axes:
-	 *   world right = +X, world up = +Y.
-	 * Manual interaction can still override camera up to support free orbit.
-	 */
-	if (context->camera_manual_override) {
-		basis_up = context->camera_up;
-	} else {
-		vec3_set(&basis_up, 0.0f, 1.0f, 0.0f);
-	}
+	/* Keep basis roll-locked to scene world up (+Y). */
+	vec3_set(&basis_up, 0.0f, 1.0f, 0.0f);
 
 	if (vec3_len(&basis_up) <= 0.0001f)
 		vec3_set(&basis_up, 0.0f, 1.0f, 0.0f);
@@ -251,15 +236,11 @@ static void scene_3d_source_get_camera_basis_locked(const struct scene_3d_source
 
 	vec3_cross(&basis_right, &basis_forward, &basis_up);
 	if (vec3_len(&basis_right) <= 0.0001f) {
-		if (context->camera_manual_override) {
-			vec3_set(&world_up, 0.0f, 1.0f, 0.0f);
+		vec3_set(&world_up, 0.0f, 1.0f, 0.0f);
+		vec3_cross(&basis_right, &basis_forward, &world_up);
+		if (vec3_len(&basis_right) <= 0.0001f) {
+			vec3_set(&world_up, 0.0f, 0.0f, 1.0f);
 			vec3_cross(&basis_right, &basis_forward, &world_up);
-			if (vec3_len(&basis_right) <= 0.0001f) {
-				vec3_set(&world_up, 0.0f, 0.0f, 1.0f);
-				vec3_cross(&basis_right, &basis_forward, &world_up);
-			}
-		} else {
-			vec3_set(&basis_right, 1.0f, 0.0f, 0.0f);
 		}
 	}
 	if (vec3_len(&basis_right) <= 0.0001f)
@@ -464,9 +445,14 @@ static void scene_3d_source_orbit_camera(struct scene_3d_source *context, int32_
 	struct vec3 forward;
 	struct vec3 right;
 	struct vec3 up;
+	struct vec3 world_up;
 	float orbit_len;
-	float yaw_rad;
-	float pitch_rad;
+	float yaw;
+	float pitch;
+	float yaw_delta;
+	float pitch_delta;
+	float horizontal_len;
+	const float max_pitch = RAD(89.0f);
 
 	if (!context)
 		return;
@@ -480,52 +466,66 @@ static void scene_3d_source_orbit_camera(struct scene_3d_source *context, int32_
 	if (!context->default_camera_valid)
 		scene_3d_source_recompute_camera_position_locked(context);
 
-	scene_3d_source_get_camera_basis_locked(context, &forward, &right, &up);
 	vec3_sub(&orbit_offset, &context->default_camera_position, &context->camera_target);
 	orbit_len = vec3_len(&orbit_offset);
 	if (orbit_len <= 0.0001f) {
 		vec3_set(&orbit_offset, 0.0f, 0.0f, context->camera_orbit_distance);
 		orbit_len = context->camera_orbit_distance;
 	}
+	if (orbit_len < 0.05f)
+		orbit_len = 0.05f;
+	context->camera_orbit_distance = orbit_len;
 
-	yaw_rad = -(float)delta_x * RAD(SCENE_3D_CAMERA_ORBIT_DEG_PER_PIXEL);
-	pitch_rad = -(float)delta_y * RAD(SCENE_3D_CAMERA_ORBIT_DEG_PER_PIXEL);
+	yaw_delta = -(float)delta_x * RAD(SCENE_3D_CAMERA_ORBIT_DEG_PER_PIXEL);
+	/*
+	 * Invert vertical drag to match Blender-like feel:
+	 * dragging mouse downward moves camera toward top view.
+	 */
+	pitch_delta = (float)delta_y * RAD(SCENE_3D_CAMERA_ORBIT_DEG_PER_PIXEL);
+	vec3_set(&world_up, 0.0f, 1.0f, 0.0f);
 
-	if (yaw_rad != 0.0f)
-		scene_3d_source_rotate_vec3_axis(&orbit_offset, &up, yaw_rad);
+	/*
+	 * Turntable orbit:
+	 * - yaw around fixed world up axis
+	 * - pitch as elevation angle with clamp
+	 * This prevents roll accumulation, so after side view a vertical drag
+	 * tilts toward top/bottom as expected.
+	 */
+	yaw = atan2f(orbit_offset.x, orbit_offset.z);
+	horizontal_len = sqrtf((orbit_offset.x * orbit_offset.x) + (orbit_offset.z * orbit_offset.z));
+	pitch = atan2f(orbit_offset.y, fmaxf(horizontal_len, 0.0001f));
 
-	if (pitch_rad != 0.0f) {
-		vec3_mulf(&forward, &orbit_offset, -1.0f);
-		if (vec3_len(&forward) <= 0.0001f)
-			vec3_set(&forward, 0.0f, 0.0f, -1.0f);
-		else
-			vec3_norm(&forward, &forward);
+	yaw += yaw_delta;
+	pitch += pitch_delta;
+	if (pitch > max_pitch)
+		pitch = max_pitch;
+	if (pitch < -max_pitch)
+		pitch = -max_pitch;
 
-		vec3_cross(&right, &forward, &up);
-		if (vec3_len(&right) <= 0.0001f)
-			vec3_set(&right, 1.0f, 0.0f, 0.0f);
-		else
-			vec3_norm(&right, &right);
+	orbit_offset.x = sinf(yaw) * cosf(pitch) * orbit_len;
+	orbit_offset.y = sinf(pitch) * orbit_len;
+	orbit_offset.z = cosf(yaw) * cosf(pitch) * orbit_len;
 
-		scene_3d_source_rotate_vec3_axis(&orbit_offset, &right, pitch_rad);
-		scene_3d_source_rotate_vec3_axis(&up, &right, pitch_rad);
-	}
+	vec3_add(&context->default_camera_position, &context->camera_target, &orbit_offset);
 
+	vec3_sub(&forward, &context->camera_target, &context->default_camera_position);
+	if (vec3_len(&forward) <= 0.0001f)
+		vec3_set(&forward, 0.0f, 0.0f, -1.0f);
+	else
+		vec3_norm(&forward, &forward);
+
+	vec3_cross(&right, &forward, &world_up);
+	if (vec3_len(&right) <= 0.0001f)
+		vec3_set(&right, 1.0f, 0.0f, 0.0f);
+	else
+		vec3_norm(&right, &right);
+
+	vec3_cross(&up, &right, &forward);
 	if (vec3_len(&up) <= 0.0001f)
 		vec3_set(&up, 0.0f, 1.0f, 0.0f);
 	else
 		vec3_norm(&up, &up);
 
-	orbit_len = vec3_len(&orbit_offset);
-	if (orbit_len <= 0.0001f) {
-		vec3_set(&orbit_offset, 0.0f, 0.0f, context->camera_orbit_distance);
-	} else {
-		if (context->camera_orbit_distance < 0.05f)
-			context->camera_orbit_distance = 0.05f;
-		vec3_mulf(&orbit_offset, &orbit_offset, context->camera_orbit_distance / orbit_len);
-	}
-
-	vec3_add(&context->default_camera_position, &context->camera_target, &orbit_offset);
 	context->camera_up = up;
 	context->camera_manual_override = true;
 	scene_3d_source_orthonormalize_camera_locked(context);
@@ -635,18 +635,31 @@ static void scene_3d_source_zoom_camera(struct scene_3d_source *context, int32_t
 	scene_3d_source_unlock_camera(context);
 }
 
-static void scene_3d_source_dolly_camera(struct scene_3d_source *context, int32_t delta_y)
+static void scene_3d_source_dolly_camera(struct scene_3d_source *context, int32_t delta_x, int32_t delta_y)
 {
 	float zoom_steps;
+	float abs_delta_x;
+	float abs_delta_y;
+	float dolly_delta;
 
-	if (!context || delta_y == 0)
+	if (!context || (delta_x == 0 && delta_y == 0))
 		return;
 
 	/*
 	 * Blender-style Ctrl+MMB dolly:
-	 * dragging up zooms in, dragging down zooms out.
+	 * - vertical drag uses Y only
+	 * - horizontal drag uses X only
+	 * This keeps dolly motion axis-locked and avoids diagonal mixing.
 	 */
-	zoom_steps = -(float)delta_y * SCENE_3D_CAMERA_DOLLY_STEPS_PER_PIXEL;
+	abs_delta_x = fabsf((float)delta_x);
+	abs_delta_y = fabsf((float)delta_y);
+
+	if (abs_delta_y >= abs_delta_x)
+		dolly_delta = -(float)delta_y;
+	else
+		dolly_delta = (float)delta_x;
+
+	zoom_steps = dolly_delta * SCENE_3D_CAMERA_DOLLY_STEPS_PER_PIXEL;
 
 	scene_3d_source_lock_camera(context);
 	scene_3d_source_apply_zoom_steps_locked(context, zoom_steps);
@@ -903,7 +916,6 @@ static void scene_3d_source_unload_effect(struct scene_3d_source *context)
 
 	context->effect = NULL;
 	context->effect_base_color_param = NULL;
-	context->effect_has_base_color_texture_param = NULL;
 	context->effect_camera_position_param = NULL;
 	context->effect_light_direction_param = NULL;
 	context->effect_ambient_strength_param = NULL;
@@ -936,8 +948,6 @@ static void scene_3d_source_load_effect(struct scene_3d_source *context)
 		gs_technique_t *wire_tech = gs_effect_get_technique(context->effect, "DrawWireframe");
 
 		context->effect_base_color_param = gs_effect_get_param_by_name(context->effect, "effect_base_color_param");
-		context->effect_has_base_color_texture_param =
-			gs_effect_get_param_by_name(context->effect, "effect_has_base_color_texture");
 		context->effect_camera_position_param =
 			gs_effect_get_param_by_name(context->effect, "effect_camera_position");
 		context->effect_light_direction_param =
@@ -952,11 +962,10 @@ static void scene_3d_source_load_effect(struct scene_3d_source *context)
 
 		blog(LOG_INFO,
 		     "[scene-3d-source: '%s'] Effect loaded: base_color_param=%s, camera_param=%s, "
-		     "light_dir_param=%s, has_base_color_param=%s, tech_fill=%s, tech_wire=%s",
+		     "light_dir_param=%s, tech_fill=%s, tech_wire=%s",
 		     scene_3d_source_log_name(context), context->effect_base_color_param ? "yes" : "no",
 		     context->effect_camera_position_param ? "yes" : "no",
-		     context->effect_light_direction_param ? "yes" : "no",
-		     context->effect_has_base_color_texture_param ? "yes" : "no", fill_tech ? "yes" : "no",
+		     context->effect_light_direction_param ? "yes" : "no", fill_tech ? "yes" : "no",
 		     wire_tech ? "yes" : "no");
 	}
 	obs_leave_graphics();
@@ -1215,6 +1224,132 @@ static void scene_3d_source_draw_bounds(struct scene_3d_source *context)
 	gs_matrix_pop();
 }
 
+static float scene_3d_source_compute_grid_step(float camera_distance)
+{
+	float raw_step;
+	float step_pow2;
+
+	if (camera_distance < 1.0f)
+		camera_distance = 1.0f;
+
+	raw_step = camera_distance / 18.0f;
+	step_pow2 = powf(2.0f, floorf(log2f(fmaxf(raw_step, 0.25f))));
+
+	return fmaxf(step_pow2, 0.25f);
+}
+
+static void scene_3d_source_draw_grid_line_parallel_x(float z, float extent, float half_width)
+{
+	gs_render_start(false);
+	gs_vertex3f(-extent, 0.0f, z - half_width);
+	gs_vertex3f(-extent, 0.0f, z + half_width);
+	gs_vertex3f(extent, 0.0f, z - half_width);
+	gs_vertex3f(extent, 0.0f, z + half_width);
+	gs_render_stop(GS_TRISTRIP);
+}
+
+static void scene_3d_source_draw_grid_line_parallel_z(float x, float extent, float half_width)
+{
+	gs_render_start(false);
+	gs_vertex3f(x - half_width, 0.0f, -extent);
+	gs_vertex3f(x + half_width, 0.0f, -extent);
+	gs_vertex3f(x - half_width, 0.0f, extent);
+	gs_vertex3f(x + half_width, 0.0f, extent);
+	gs_render_stop(GS_TRISTRIP);
+}
+
+static void scene_3d_source_draw_origin_marker(float half_size)
+{
+	gs_render_start(false);
+	gs_vertex3f(-half_size, 0.0f, -half_size);
+	gs_vertex3f(-half_size, 0.0f, half_size);
+	gs_vertex3f(half_size, 0.0f, -half_size);
+	gs_vertex3f(half_size, 0.0f, half_size);
+	gs_render_stop(GS_TRISTRIP);
+}
+
+static void scene_3d_source_draw_world_grid(const struct vec3 *camera_position, const struct vec3 *camera_target)
+{
+	gs_effect_t *solid_effect;
+	gs_eparam_t *color_param;
+	struct vec4 x_axis_color;
+	struct vec4 z_axis_color;
+	struct vec4 grid_color;
+	struct vec4 origin_color;
+	struct vec3 camera_to_target;
+	float camera_distance;
+	float grid_step;
+	float required_extent;
+	float snapped_origin_x;
+	float snapped_origin_z;
+	float grid_extent;
+	float line_half_width;
+	float axis_half_width;
+	float origin_half_size;
+	int half_lines;
+	int idx;
+
+	if (!camera_position || !camera_target)
+		return;
+
+	solid_effect = obs_get_base_effect(OBS_EFFECT_SOLID);
+	color_param = solid_effect ? gs_effect_get_param_by_name(solid_effect, "color") : NULL;
+	if (!solid_effect || !color_param)
+		return;
+
+	vec3_sub(&camera_to_target, camera_position, camera_target);
+	camera_distance = vec3_len(&camera_to_target);
+	grid_step = scene_3d_source_compute_grid_step(camera_distance);
+	required_extent = fmaxf(16.0f, camera_distance * 6.0f);
+	half_lines = (int)ceilf(required_extent / grid_step);
+	if (half_lines < 48)
+		half_lines = 48;
+	if (half_lines > 96) {
+		half_lines = 96;
+		grid_step = required_extent / (float)half_lines;
+		grid_step = powf(2.0f, ceilf(log2f(fmaxf(grid_step, 0.25f))));
+	}
+	grid_extent = grid_step * (float)half_lines;
+	snapped_origin_x = roundf(camera_target->x / grid_step) * grid_step;
+	snapped_origin_z = roundf(camera_target->z / grid_step) * grid_step;
+	line_half_width = fmaxf(0.0015f, grid_step * 0.010f);
+	axis_half_width = line_half_width * 1.8f;
+	origin_half_size = axis_half_width * 2.2f;
+
+	vec4_set(&x_axis_color, 0.95f, 0.32f, 0.32f, 0.92f);
+	vec4_set(&z_axis_color, 0.38f, 0.55f, 0.98f, 0.92f);
+	vec4_set(&grid_color, 0.52f, 0.52f, 0.52f, 0.68f);
+	vec4_set(&origin_color, 1.0f, 1.0f, 1.0f, 0.98f);
+
+	gs_blend_state_push();
+	gs_enable_blending(true);
+	gs_blend_function(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA);
+
+	for (idx = -half_lines; idx <= half_lines; idx++) {
+		const float x = snapped_origin_x + (float)idx * grid_step;
+		const bool axis_line = fabsf(x) <= (grid_step * 0.5f);
+
+		gs_effect_set_vec4(color_param, axis_line ? &z_axis_color : &grid_color);
+		while (gs_effect_loop(solid_effect, "Solid"))
+			scene_3d_source_draw_grid_line_parallel_z(x, grid_extent, axis_line ? axis_half_width : line_half_width);
+	}
+
+	for (idx = -half_lines; idx <= half_lines; idx++) {
+		const float z = snapped_origin_z + (float)idx * grid_step;
+		const bool axis_line = fabsf(z) <= (grid_step * 0.5f);
+
+		gs_effect_set_vec4(color_param, axis_line ? &x_axis_color : &grid_color);
+		while (gs_effect_loop(solid_effect, "Solid"))
+			scene_3d_source_draw_grid_line_parallel_x(z, grid_extent, axis_line ? axis_half_width : line_half_width);
+	}
+
+	gs_effect_set_vec4(color_param, &origin_color);
+	while (gs_effect_loop(solid_effect, "Solid"))
+		scene_3d_source_draw_origin_marker(origin_half_size);
+
+	gs_blend_state_pop();
+}
+
 /* Must be called in an active graphics context. */
 static bool scene_3d_source_ensure_model_texrender(struct scene_3d_source *context)
 {
@@ -1238,7 +1373,6 @@ static bool scene_3d_source_ensure_model_texrender(struct scene_3d_source *conte
 static gs_texture_t *scene_3d_source_render_model_to_texture(struct scene_3d_source *context)
 {
 	struct vec4 clear_color;
-	gs_texture_t *base_color_texture = NULL;
 	struct vec3 camera_position;
 	struct vec3 camera_target;
 	struct vec3 camera_up;
@@ -1247,8 +1381,6 @@ static gs_texture_t *scene_3d_source_render_model_to_texture(struct scene_3d_sou
 	float camera_znear;
 	float camera_zfar;
 	bool camera_valid = false;
-	const bool has_base_color_texture =
-		context->base_color_image_valid && context->base_color_image.image3.image2.image.texture != NULL;
 	const char *fill_technique = "DrawBlinnPhongWireframe";
 	const char *wireframe_technique = "DrawWireframe";
 	enum gs_cull_mode previous_cull_mode;
@@ -1285,11 +1417,8 @@ static gs_texture_t *scene_3d_source_render_model_to_texture(struct scene_3d_sou
 		context->diagnostics_logged_draw = true;
 	}
 
-	if (context->base_color_image_valid)
-		base_color_texture = context->base_color_image.image3.image2.image.texture;
-
 	aspect = (float)context->width / (float)(context->height ? context->height : 1);
-	vec4_zero(&clear_color);
+	vec4_from_rgba_srgb(&clear_color, 0xFF101010);
 	gs_clear(GS_CLEAR_COLOR | GS_CLEAR_DEPTH, &clear_color, 1.0f, 0);
 
 	gs_enable_framebuffer_srgb(true);
@@ -1304,14 +1433,8 @@ static gs_texture_t *scene_3d_source_render_model_to_texture(struct scene_3d_sou
 	gs_matrix_identity();
 	scene_3d_source_apply_camera_view_matrix(&camera_position, &camera_target, &camera_up);
 
-	if (context->effect_base_color_param) {
-		if (has_base_color_texture)
-			gs_effect_set_texture_srgb(context->effect_base_color_param, base_color_texture);
-		else
-			gs_effect_set_texture(context->effect_base_color_param, NULL);
-	}
-	if (context->effect_has_base_color_texture_param)
-		gs_effect_set_float(context->effect_has_base_color_texture_param, has_base_color_texture ? 1.0f : 0.0f);
+	if (context->effect_base_color_param)
+		gs_effect_set_texture(context->effect_base_color_param, NULL);
 	if (context->effect_camera_position_param)
 		gs_effect_set_vec3(context->effect_camera_position_param, &camera_position);
 	if (context->effect_light_direction_param)
@@ -1327,6 +1450,8 @@ static gs_texture_t *scene_3d_source_render_model_to_texture(struct scene_3d_sou
 
 	previous_cull_mode = gs_get_cull_mode();
 	gs_set_cull_mode(GS_NEITHER);
+
+	scene_3d_source_draw_world_grid(&camera_position, &camera_target);
 
 	gs_load_vertexbuffer(context->vertex_buffer);
 	gs_load_indexbuffer(context->index_buffer);
@@ -2089,7 +2214,7 @@ static void scene_3d_source_mouse_move(void *data, const struct obs_mouse_event 
 	if (drag_pan)
 		scene_3d_source_pan_camera(context, delta_x, delta_y);
 	if (drag_zoom)
-		scene_3d_source_dolly_camera(context, delta_y);
+		scene_3d_source_dolly_camera(context, delta_x, delta_y);
 }
 
 static void scene_3d_source_mouse_wheel(void *data, const struct obs_mouse_event *event, int x_delta, int y_delta)
@@ -2175,6 +2300,53 @@ static void scene_3d_source_get_camera_basis_proc(void *data, calldata_t *params
 	calldata_set_float(params, "up_z", up.z);
 }
 
+static void scene_3d_source_get_camera_state_proc(void *data, calldata_t *params)
+{
+	struct scene_3d_source *context = data;
+	struct vec3 camera_position;
+	struct vec3 camera_target;
+	struct vec3 camera_up;
+	float fov_deg = 50.0f;
+	float znear = 0.1f;
+	float zfar = 100.0f;
+	bool available = false;
+
+	if (!params)
+		return;
+
+	vec3_zero(&camera_position);
+	vec3_zero(&camera_target);
+	vec3_set(&camera_up, 0.0f, 1.0f, 0.0f);
+
+	if (context) {
+		scene_3d_source_lock_camera(context);
+		if (context->default_camera_valid) {
+			camera_position = context->default_camera_position;
+			camera_target = context->camera_target;
+			camera_up = context->camera_up;
+			fov_deg = context->default_camera_fov_deg;
+			znear = context->default_camera_znear;
+			zfar = context->default_camera_zfar;
+			available = true;
+		}
+		scene_3d_source_unlock_camera(context);
+	}
+
+	calldata_set_bool(params, "available", available);
+	calldata_set_float(params, "camera_x", camera_position.x);
+	calldata_set_float(params, "camera_y", camera_position.y);
+	calldata_set_float(params, "camera_z", camera_position.z);
+	calldata_set_float(params, "target_x", camera_target.x);
+	calldata_set_float(params, "target_y", camera_target.y);
+	calldata_set_float(params, "target_z", camera_target.z);
+	calldata_set_float(params, "up_x", camera_up.x);
+	calldata_set_float(params, "up_y", camera_up.y);
+	calldata_set_float(params, "up_z", camera_up.z);
+	calldata_set_float(params, "fov_deg", fov_deg);
+	calldata_set_float(params, "znear", znear);
+	calldata_set_float(params, "zfar", zfar);
+}
+
 static void scene_3d_source_defaults(obs_data_t *settings)
 {
 	obs_data_set_default_string(settings, S_MODEL_PATH, "");
@@ -2257,6 +2429,14 @@ static void *scene_3d_source_create(obs_data_t *settings, obs_source_t *source)
 				 "out float right_x, out float right_y, out float right_z, "
 				 "out float up_x, out float up_y, out float up_z)",
 				 scene_3d_source_get_camera_basis_proc, context);
+		proc_handler_add(proc_handler,
+				 "void get_scene_3d_camera_state("
+				 "out bool available, "
+				 "out float camera_x, out float camera_y, out float camera_z, "
+				 "out float target_x, out float target_y, out float target_z, "
+				 "out float up_x, out float up_y, out float up_z, "
+				 "out float fov_deg, out float znear, out float zfar)",
+				 scene_3d_source_get_camera_state_proc, context);
 	}
 
 	pthread_mutex_init_value(&context->camera_mutex);

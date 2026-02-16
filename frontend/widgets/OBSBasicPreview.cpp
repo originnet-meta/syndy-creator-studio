@@ -1,7 +1,16 @@
+/******************************************************************************
+    Modifications Copyright (C) 2026 Uniflow, Inc.
+    Author: Kim Taehyung <gaiaengine@gmail.com>
+    Modified: 2026-02-16
+    Notes: Changes for Syndy Creator Studio.
+******************************************************************************/
+
 #include "OBSBasicPreview.hpp"
 
 #include <utility/display-helpers.hpp>
 #include <widgets/OBSBasic.hpp>
+
+#include <cstring>
 
 #include "moc_OBSBasicPreview.cpp"
 
@@ -610,6 +619,31 @@ void OBSBasicPreview::mousePressEvent(QMouseEvent *event)
 	mousePos = startPos;
 	wrapper = obs_scene_save_transform_states(main->GetCurrentScene(), true);
 	changed = false;
+}
+
+void OBSBasicPreview::mouseDoubleClickEvent(QMouseEvent *event)
+{
+	OBSQTDisplay::mouseDoubleClickEvent(event);
+
+	if (locked || event->button() != Qt::LeftButton)
+		return;
+
+	vec2 pos = GetMouseEventPos(event);
+	OBSSceneItem item = GetItemAtPos(pos, true);
+	if (!item)
+		return;
+
+	obs_source_t *source = obs_sceneitem_get_source(item);
+	if (!source)
+		return;
+
+	const char *id = obs_source_get_unversioned_id(source);
+	const uint32_t flags = obs_source_get_output_flags(source);
+	const bool is_scene_3d_source = id && strcmp(id, "scene_3d_source") == 0;
+	const bool can_interact = (flags & OBS_SOURCE_INTERACTION) != 0;
+
+	if (is_scene_3d_source && can_interact)
+		OBSBasic::Get()->CreateInteractionWindow(source);
 }
 
 void OBSBasicPreview::UpdateCursor(uint32_t &flags)
