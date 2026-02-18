@@ -5,7 +5,7 @@ This checklist is for validating color-space and alpha behavior after IMP-06.
 ## Preconditions
 
 1. Renderer is set to Direct3D 11.
-2. `scene-3d-source` plugin is loaded.
+2. `vspace-source` plugin is loaded.
 3. Test scene contains:
    - One `Scene 3D Source` with a model that uses baseColor texture.
    - One `Image Source` with the same reference texture.
@@ -33,7 +33,7 @@ This checklist is for validating color-space and alpha behavior after IMP-06.
 
 4. D3D11-only smoke:
    - Launch OBS, switch scenes 20+ times, reload source settings repeatedly.
-   - Confirm no render-thread warnings/crashes related to `scene-3d-source`.
+   - Confirm no render-thread warnings/crashes related to `vspace-source`.
 
 ## Logging Checkpoints
 

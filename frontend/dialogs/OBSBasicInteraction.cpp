@@ -38,6 +38,7 @@
 
 #include <QInputEvent>
 #include <QLabel>
+#include <QGuiApplication>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -51,7 +52,7 @@
 using namespace std;
 
 namespace {
-struct Scene3DCameraBasis {
+struct VspaceCameraBasis {
 	float right_x;
 	float right_y;
 	float right_z;
@@ -63,7 +64,7 @@ struct Scene3DCameraBasis {
 	float forward_z;
 };
 
-struct Scene3DCameraState {
+struct VspaceCameraState {
 	bool available;
 	float camera_x;
 	float camera_y;
@@ -111,36 +112,36 @@ static void NormalizeVec3(float &x, float &y, float &z, float fallback_x, float 
 	z = fallback_z;
 }
 
-static void NormalizeCameraBasis(Scene3DCameraBasis &basis)
+static void NormalizeCameraBasis(VspaceCameraBasis &basis)
 {
 	NormalizeVec3(basis.right_x, basis.right_y, basis.right_z, 1.0f, 0.0f, 0.0f);
-	NormalizeVec3(basis.up_x, basis.up_y, basis.up_z, 0.0f, 1.0f, 0.0f);
-	NormalizeVec3(basis.forward_x, basis.forward_y, basis.forward_z, 0.0f, 0.0f, -1.0f);
+	NormalizeVec3(basis.up_x, basis.up_y, basis.up_z, 0.0f, 0.0f, 1.0f);
+	NormalizeVec3(basis.forward_x, basis.forward_y, basis.forward_z, 0.0f, 1.0f, 0.0f);
 }
 
-static bool IsScene3DSource(obs_source_t *source)
+static bool IsVspaceSource(obs_source_t *source)
 {
 	const char *id = source ? obs_source_get_id(source) : nullptr;
 
-	return id && strcmp(id, "scene_3d_source") == 0;
+	return id && strcmp(id, "vspace_source") == 0;
 }
 
-static bool GetScene3DCameraBasis(obs_source_t *source, Scene3DCameraBasis &basis)
+static bool GetVspaceCameraBasis(obs_source_t *source, VspaceCameraBasis &basis)
 {
 	proc_handler_t *proc_handler = nullptr;
 	calldata_t cd = {};
 	bool success = false;
 
-	basis = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, -1.0f};
+	basis = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f};
 
-	if (!source || !IsScene3DSource(source))
+	if (!source || !IsVspaceSource(source))
 		return false;
 
 	proc_handler = obs_source_get_proc_handler(source);
 	if (!proc_handler)
 		return false;
 
-	success = proc_handler_call(proc_handler, "get_scene_3d_camera_basis", &cd);
+	success = proc_handler_call(proc_handler, "get_vspace_camera_basis", &cd);
 	if (!success) {
 		calldata_free(&cd);
 		return false;
@@ -166,22 +167,22 @@ static bool GetScene3DCameraBasis(obs_source_t *source, Scene3DCameraBasis &basi
 	return true;
 }
 
-static bool GetScene3DCameraState(obs_source_t *source, Scene3DCameraState &state)
+static bool GetVspaceCameraState(obs_source_t *source, VspaceCameraState &state)
 {
 	proc_handler_t *proc_handler = nullptr;
 	calldata_t cd = {};
 	bool success = false;
 
-	state = {false, 0.0f, 0.0f, -3.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 50.0f, 0.1f, 100.0f};
+	state = {false, 0.0f, -3.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 50.0f, 0.1f, 100.0f};
 
-	if (!source || !IsScene3DSource(source))
+	if (!source || !IsVspaceSource(source))
 		return false;
 
 	proc_handler = obs_source_get_proc_handler(source);
 	if (!proc_handler)
 		return false;
 
-	success = proc_handler_call(proc_handler, "get_scene_3d_camera_state", &cd);
+	success = proc_handler_call(proc_handler, "get_vspace_camera_state", &cd);
 	if (!success) {
 		calldata_free(&cd);
 		return false;
@@ -210,7 +211,7 @@ static bool GetScene3DCameraState(obs_source_t *source, Scene3DCameraState &stat
 	return true;
 }
 
-static bool ProjectScene3DPointToScreen(const Scene3DCameraState &state, uint32_t source_cx, uint32_t source_cy,
+static bool ProjectVspacePointToScreen(const VspaceCameraState &state, uint32_t source_cx, uint32_t source_cy,
 					float world_x, float world_y, float world_z, float &screen_x, float &screen_y)
 {
 	float forward_x = state.target_x - state.camera_x;
@@ -237,8 +238,8 @@ static bool ProjectScene3DPointToScreen(const Scene3DCameraState &state, uint32_
 	if (!state.available || source_cx == 0 || source_cy == 0)
 		return false;
 
-	NormalizeVec3(forward_x, forward_y, forward_z, 0.0f, 0.0f, -1.0f);
-	NormalizeVec3(up_x, up_y, up_z, 0.0f, 1.0f, 0.0f);
+	NormalizeVec3(forward_x, forward_y, forward_z, 0.0f, 1.0f, 0.0f);
+	NormalizeVec3(up_x, up_y, up_z, 0.0f, 0.0f, 1.0f);
 
 	right_x = forward_y * up_z - forward_z * up_y;
 	right_y = forward_z * up_x - forward_x * up_z;
@@ -248,7 +249,7 @@ static bool ProjectScene3DPointToScreen(const Scene3DCameraState &state, uint32_
 	up_x = right_y * forward_z - right_z * forward_y;
 	up_y = right_z * forward_x - right_x * forward_z;
 	up_z = right_x * forward_y - right_y * forward_x;
-	NormalizeVec3(up_x, up_y, up_z, 0.0f, 1.0f, 0.0f);
+	NormalizeVec3(up_x, up_y, up_z, 0.0f, 0.0f, 1.0f);
 
 	dx = world_x - state.camera_x;
 	dy = world_y - state.camera_y;
@@ -288,13 +289,13 @@ static bool LineIntersectsSourceRect(float x0, float y0, float x1, float y1, flo
 	return true;
 }
 
-static void DrawScene3DGrid(obs_source_t *source, uint32_t source_cx, uint32_t source_cy)
+static void DrawVspaceGrid(obs_source_t *source, uint32_t source_cx, uint32_t source_cy)
 {
-	Scene3DCameraState state = {};
+	VspaceCameraState state = {};
 	gs_effect_t *solid = nullptr;
 	gs_eparam_t *color_param = nullptr;
 	struct vec4 x_axis_color;
-	struct vec4 z_axis_color;
+	struct vec4 y_axis_color;
 	struct vec4 grid_color;
 	float camera_distance;
 	float raw_step;
@@ -306,9 +307,9 @@ static void DrawScene3DGrid(obs_source_t *source, uint32_t source_cx, uint32_t s
 	const float line_thickness = 1.0f;
 	int index;
 
-	if (!source || !IsScene3DSource(source))
+	if (!source || !IsVspaceSource(source))
 		return;
-	if (!GetScene3DCameraState(source, state))
+	if (!GetVspaceCameraState(source, state))
 		return;
 
 	solid = obs_get_base_effect(OBS_EFFECT_SOLID);
@@ -316,7 +317,8 @@ static void DrawScene3DGrid(obs_source_t *source, uint32_t source_cx, uint32_t s
 	if (!solid || !color_param)
 		return;
 
-	camera_distance = VecLength(state.camera_x, state.camera_y, state.camera_z);
+	camera_distance = VecLength(state.camera_x - state.target_x, state.camera_y - state.target_y,
+				    state.camera_z - state.target_z);
 	if (camera_distance < 1.0f)
 		camera_distance = 1.0f;
 	raw_step = camera_distance / 18.0f;
@@ -325,7 +327,7 @@ static void DrawScene3DGrid(obs_source_t *source, uint32_t source_cx, uint32_t s
 	grid_extent = grid_step * (float)half_lines;
 
 	vec4_set(&x_axis_color, 0.95f, 0.32f, 0.32f, 0.92f);
-	vec4_set(&z_axis_color, 0.38f, 0.55f, 0.98f, 0.92f);
+	vec4_set(&y_axis_color, 0.36f, 0.88f, 0.38f, 0.92f);
 	vec4_set(&grid_color, 0.52f, 0.52f, 0.52f, 0.68f);
 
 	gs_blend_state_push();
@@ -339,28 +341,28 @@ static void DrawScene3DGrid(obs_source_t *source, uint32_t source_cx, uint32_t s
 		float x1;
 		float y1;
 
-		if (!ProjectScene3DPointToScreen(state, source_cx, source_cy, x, 0.0f, -grid_extent, x0, y0))
+		if (!ProjectVspacePointToScreen(state, source_cx, source_cy, x, -grid_extent, 0.0f, x0, y0))
 			continue;
-		if (!ProjectScene3DPointToScreen(state, source_cx, source_cy, x, 0.0f, grid_extent, x1, y1))
+		if (!ProjectVspacePointToScreen(state, source_cx, source_cy, x, grid_extent, 0.0f, x1, y1))
 			continue;
 		if (!LineIntersectsSourceRect(x0, y0, x1, y1, (float)source_cx, (float)source_cy))
 			continue;
 
-		gs_effect_set_vec4(color_param, index == 0 ? &z_axis_color : &grid_color);
+		gs_effect_set_vec4(color_param, index == 0 ? &y_axis_color : &grid_color);
 		while (gs_effect_loop(solid, "Solid"))
 			DrawGizmoLine(x0, y0, x1, y1, index == 0 ? axis_thickness : line_thickness);
 	}
 
 	for (index = -half_lines; index <= half_lines; index++) {
-		const float z = (float)index * grid_step;
+		const float y = (float)index * grid_step;
 		float x0;
 		float y0;
 		float x1;
 		float y1;
 
-		if (!ProjectScene3DPointToScreen(state, source_cx, source_cy, -grid_extent, 0.0f, z, x0, y0))
+		if (!ProjectVspacePointToScreen(state, source_cx, source_cy, -grid_extent, y, 0.0f, x0, y0))
 			continue;
-		if (!ProjectScene3DPointToScreen(state, source_cx, source_cy, grid_extent, 0.0f, z, x1, y1))
+		if (!ProjectVspacePointToScreen(state, source_cx, source_cy, grid_extent, y, 0.0f, x1, y1))
 			continue;
 		if (!LineIntersectsSourceRect(x0, y0, x1, y1, (float)source_cx, (float)source_cy))
 			continue;
@@ -431,9 +433,9 @@ static void DrawGizmoLabelGlyph(gs_effect_t *solid, gs_eparam_t *color_param, ch
 	}
 }
 
-static void DrawScene3DGizmo(obs_source_t *source, int viewport_x, int viewport_y, int viewport_cx, int viewport_cy)
+static void DrawVspaceGizmo(obs_source_t *source, int viewport_x, int viewport_y, int viewport_cx, int viewport_cy)
 {
-	Scene3DCameraBasis basis = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, -1.0f};
+	VspaceCameraBasis basis = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f};
 	gs_effect_t *solid = nullptr;
 	gs_eparam_t *color_param = nullptr;
 	std::array<GizmoAxis, 3> axes;
@@ -450,12 +452,13 @@ static void DrawScene3DGizmo(obs_source_t *source, int viewport_x, int viewport_
 	struct vec4 background_color;
 	struct vec4 center_color;
 
-	if (!source || !IsScene3DSource(source))
+	if (!source || !IsVspaceSource(source))
 		return;
 	if (viewport_cx <= 0 || viewport_cy <= 0)
 		return;
 
-	GetScene3DCameraBasis(source, basis);
+	if (!GetVspaceCameraBasis(source, basis))
+		return;
 
 	solid = obs_get_base_effect(OBS_EFFECT_SOLID);
 	color_param = solid ? gs_effect_get_param_by_name(solid, "color") : nullptr;
@@ -676,7 +679,7 @@ void OBSBasicInteraction::DrawPreview(void *data, uint32_t cx, uint32_t cy)
 	gs_ortho(0.0f, float(sourceCX), 0.0f, float(sourceCY), -100.0f, 100.0f);
 	gs_set_viewport(x, y, newCX, newCY);
 	obs_source_video_render(window->source);
-	DrawScene3DGizmo(window->source, x, y, newCX, newCY);
+	DrawVspaceGizmo(window->source, x, y, newCX, newCY);
 
 	gs_set_linear_srgb(previous);
 	gs_projection_pop();
@@ -827,6 +830,14 @@ bool OBSBasicInteraction::HandleMouseClickEvent(QMouseEvent *event)
 	QPoint pos = event->pos();
 	bool insideSource = GetSourceRelativeXY(pos.x(), pos.y(), mouseEvent.x, mouseEvent.y);
 
+	if (IsVspaceSource(source) && button == MOUSE_MIDDLE) {
+		if (!mouseUp) {
+			ui->preview->grabMouse();
+		} else if (QWidget::mouseGrabber() == ui->preview) {
+			ui->preview->releaseMouse();
+		}
+	}
+
 	if (mouseUp || insideSource)
 		obs_source_send_mouse_click(source, &mouseEvent, button, mouseUp, clickCount);
 
@@ -838,11 +849,19 @@ bool OBSBasicInteraction::HandleMouseMoveEvent(QMouseEvent *event)
 	struct obs_mouse_event mouseEvent = {};
 
 	bool mouseLeave = event->type() == QEvent::Leave;
+	const bool vspaceSource = IsVspaceSource(source);
+	const bool middleHeld = (QGuiApplication::mouseButtons() & Qt::MiddleButton) != 0;
+
+	if (mouseLeave && vspaceSource && middleHeld)
+		return true;
 
 	if (!mouseLeave) {
 		mouseEvent.modifiers = TranslateQtMouseEventModifiers(event);
 		QPoint pos = event->pos();
-		mouseLeave = !GetSourceRelativeXY(pos.x(), pos.y(), mouseEvent.x, mouseEvent.y);
+		const bool insideSource = GetSourceRelativeXY(pos.x(), pos.y(), mouseEvent.x, mouseEvent.y);
+		mouseLeave = !insideSource;
+		if (mouseLeave && vspaceSource && middleHeld)
+			mouseLeave = false;
 	}
 
 	obs_source_send_mouse_move(source, &mouseEvent, mouseLeave);
@@ -886,6 +905,9 @@ bool OBSBasicInteraction::HandleMouseWheelEvent(QWheelEvent *event)
 bool OBSBasicInteraction::HandleFocusEvent(QFocusEvent *event)
 {
 	bool focus = event->type() == QEvent::FocusIn;
+
+	if (!focus && QWidget::mouseGrabber() == ui->preview)
+		ui->preview->releaseMouse();
 
 	obs_source_send_focus(source, focus);
 

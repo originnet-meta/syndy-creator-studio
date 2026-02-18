@@ -28,6 +28,7 @@ uniform float4x4 ViewProj;
 uniform float3 effect_camera_position = {0.0, 0.0, -3.0};
 uniform float4 effect_solid_base_color = {0.36, 0.36, 0.38, 1.0};
 uniform float4 effect_wireframe_color = {0.0, 0.0, 0.0, 1.0};
+uniform float effect_wireframe_thickness = 1.2;
 uniform float3 effect_light_direction = {-0.35, -0.65, -0.70};
 uniform float effect_ambient_strength = 0.32;
 uniform float effect_diffuse_strength = 0.82;
@@ -40,10 +41,17 @@ sampler_state linear_sampler {
 	AddressV = Clamp;
 };
 
-struct VertData {
+struct VertDataFill {
 	float4 pos : POSITION;
 	float3 normal : NORMAL;
 	float2 uv : TEXCOORD0;
+};
+
+struct VertDataWire {
+	float4 pos : POSITION;
+	float3 normal : NORMAL;
+	float2 uv : TEXCOORD0;
+	float4 bary : TEXCOORD1;
 };
 
 struct VertDataOut {
@@ -53,12 +61,31 @@ struct VertDataOut {
 	float2 uv : TEXCOORD0;
 };
 
-VertDataOut VSDefault(VertData v)
+struct WireDataOut {
+	float4 pos : POSITION;
+	float3 world_pos : TEXCOORD1;
+	float3 normal : TEXCOORD2;
+	float2 uv : TEXCOORD0;
+	float3 bary : TEXCOORD3;
+};
+
+VertDataOut VSDefault(VertDataFill v)
 {
 	VertDataOut v_out;
 	v_out.world_pos = v.pos.xyz;
 	v_out.normal = v.normal;
 	v_out.uv = v.uv;
+	v_out.pos = mul(float4(v.pos.xyz, 1.0), ViewProj);
+	return v_out;
+}
+
+WireDataOut VSWireframe(VertDataWire v)
+{
+	WireDataOut v_out;
+	v_out.world_pos = v.pos.xyz;
+	v_out.normal = v.normal;
+	v_out.uv = v.uv;
+	v_out.bary = v.bary.xyz;
 	v_out.pos = mul(float4(v.pos.xyz, 1.0), ViewProj);
 	return v_out;
 }
@@ -91,10 +118,21 @@ float4 PSBlinnPhongWireframe(VertDataOut v) : TARGET
 	return float4(lit_color, base_color.a);
 }
 
-float4 PSWireframe(VertDataOut v) : TARGET
+float wire_edge_alpha(float3 bary)
 {
-	v.uv += 0.0;
-	return effect_wireframe_color;
+	float3 fw = fwidth(bary);
+	float3 edge = smoothstep(float3(0.0, 0.0, 0.0), fw * effect_wireframe_thickness, bary);
+	return saturate(1.0 - min(edge.x, min(edge.y, edge.z)));
+}
+
+float4 PSWireframe(WireDataOut v) : TARGET
+{
+	float alpha = wire_edge_alpha(v.bary) * effect_wireframe_color.a;
+
+	if (alpha < 0.001f)
+		discard;
+
+	return float4(effect_wireframe_color.rgb, alpha);
 }
 
 technique DrawBlinnPhongWireframe
@@ -110,7 +148,7 @@ technique DrawWireframe
 {
 	pass
 	{
-		vertex_shader = VSDefault(v);
+		vertex_shader = VSWireframe(v);
 		pixel_shader = PSWireframe(v);
 	}
 }

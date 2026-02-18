@@ -163,27 +163,27 @@ set_target_properties(startup-splash-guard-test PROPERTIES
 )
 register_win_test(startup-splash-guard-test)
 
-set(scene_3d_draco_fixture_dir "${CMAKE_SOURCE_DIR}/test/test-input/data/scene-3d")
+set(vspace_draco_fixture_dir "${CMAKE_SOURCE_DIR}/test/test-input/data/vspace")
 
 add_executable(
-  scene-3d-draco-loader-test
-  scene-3d-draco-loader-test.cpp
-  ../../plugins/scene-3d-source/scene-3d-gltf-loader.c
-  ../../plugins/scene-3d-source/scene-3d-gltf-loader.h
+  vspace-draco-loader-test
+  vspace-draco-loader-test.cpp
+  ../../plugins/vspace-source/vspace-gltf-loader.c
+  ../../plugins/vspace-source/vspace-gltf-loader.h
 )
 target_include_directories(
-  scene-3d-draco-loader-test
+  vspace-draco-loader-test
   PRIVATE
-    ${CMAKE_SOURCE_DIR}/plugins/scene-3d-source
+    ${CMAKE_SOURCE_DIR}/plugins/vspace-source
 )
-target_link_libraries(scene-3d-draco-loader-test PRIVATE OBS::libobs)
+target_link_libraries(vspace-draco-loader-test PRIVATE OBS::libobs)
 target_compile_definitions(
-  scene-3d-draco-loader-test
+  vspace-draco-loader-test
   PRIVATE
-    SCENE_3D_DRACO_FIXTURE_DIR="${scene_3d_draco_fixture_dir}"
+    VSPACE_DRACO_FIXTURE_DIR="${vspace_draco_fixture_dir}"
 )
-set_target_properties(scene-3d-draco-loader-test PROPERTIES
+set_target_properties(vspace-draco-loader-test PROPERTIES
   FOLDER "tests and examples"
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/libobs/$<CONFIG>"
 )
-register_win_test(scene-3d-draco-loader-test)
+register_win_test(vspace-draco-loader-test)

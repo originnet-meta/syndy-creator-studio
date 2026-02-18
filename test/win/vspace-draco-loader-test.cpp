@@ -24,28 +24,28 @@
 ******************************************************************************/
 
 extern "C" {
-#include "../../plugins/scene-3d-source/scene-3d-gltf-loader.h"
+#include "../../plugins/vspace-source/vspace-gltf-loader.h"
 }
 
 #include <stdio.h>
 
 #include <string>
 
-#ifndef SCENE_3D_DRACO_FIXTURE_DIR
-#define SCENE_3D_DRACO_FIXTURE_DIR "test/test-input/data/scene-3d"
+#ifndef VSPACE_DRACO_FIXTURE_DIR
+#define VSPACE_DRACO_FIXTURE_DIR "test/test-input/data/vspace"
 #endif
 
 static bool expect(bool condition, const char *message)
 {
 	if (!condition)
-		fprintf(stderr, "scene-3d-draco-loader-test: %s\n", message);
+		fprintf(stderr, "vspace-draco-loader-test: %s\n", message);
 
 	return condition;
 }
 
 static std::string fixture_path(const char *name)
 {
-	std::string path = SCENE_3D_DRACO_FIXTURE_DIR;
+	std::string path = VSPACE_DRACO_FIXTURE_DIR;
 
 	if (!path.empty() && path.back() != '/' && path.back() != '\\')
 		path.push_back('/');
@@ -54,19 +54,19 @@ static std::string fixture_path(const char *name)
 	return path;
 }
 
-static bool run_success_case(const char *label, const char *fixture_name, const struct scene_3d_gltf_load_options *options,
-			     bool expect_draco_extension, enum scene_3d_decode_path expect_decode_path)
+static bool run_success_case(const char *label, const char *fixture_name, const struct vspace_gltf_load_options *options,
+			     bool expect_draco_extension, enum vspace_decode_path expect_decode_path)
 {
-	struct scene_3d_cpu_payload payload = {0};
-	struct scene_3d_gltf_error error = {0};
-	const struct scene_3d_cpu_primitive_payload *primitive = NULL;
+	struct vspace_cpu_payload payload = {0};
+	struct vspace_gltf_error error = {0};
+	const struct vspace_cpu_primitive_payload *primitive = NULL;
 	const std::string path = fixture_path(fixture_name);
 	bool ok = true;
 
-	if (!scene_3d_gltf_load_cpu_payload(path.c_str(), &payload, options, &error)) {
-		fprintf(stderr, "scene-3d-draco-loader-test: %s failed: %s (%s)\n", label,
-			scene_3d_gltf_error_to_string(error.code), error.message ? error.message : "no details");
-		scene_3d_gltf_clear_error(&error);
+	if (!vspace_gltf_load_cpu_payload(path.c_str(), &payload, options, &error)) {
+		fprintf(stderr, "vspace-draco-loader-test: %s failed: %s (%s)\n", label,
+			vspace_gltf_error_to_string(error.code), error.message ? error.message : "no details");
+		vspace_gltf_clear_error(&error);
 		return false;
 	}
 
@@ -89,44 +89,44 @@ static bool run_success_case(const char *label, const char *fixture_name, const 
 	ok &= expect(primitive->texcoords != NULL, "texcoord payload mismatch");
 
 cleanup:
-	scene_3d_gltf_free_cpu_payload(&payload);
-	scene_3d_gltf_clear_error(&error);
+	vspace_gltf_free_cpu_payload(&payload);
+	vspace_gltf_clear_error(&error);
 	return ok;
 }
 
-static bool run_failure_case(const char *label, const char *fixture_name, const struct scene_3d_gltf_load_options *options,
-			     enum scene_3d_gltf_error_code expect_error)
+static bool run_failure_case(const char *label, const char *fixture_name, const struct vspace_gltf_load_options *options,
+			     enum vspace_gltf_error_code expect_error)
 {
-	struct scene_3d_cpu_payload payload = {0};
-	struct scene_3d_gltf_error error = {0};
+	struct vspace_cpu_payload payload = {0};
+	struct vspace_gltf_error error = {0};
 	const std::string path = fixture_path(fixture_name);
 	bool matched = false;
 
-	if (scene_3d_gltf_load_cpu_payload(path.c_str(), &payload, options, &error)) {
-		scene_3d_gltf_free_cpu_payload(&payload);
-		scene_3d_gltf_clear_error(&error);
-		fprintf(stderr, "scene-3d-draco-loader-test: %s unexpectedly succeeded\n", label);
+	if (vspace_gltf_load_cpu_payload(path.c_str(), &payload, options, &error)) {
+		vspace_gltf_free_cpu_payload(&payload);
+		vspace_gltf_clear_error(&error);
+		fprintf(stderr, "vspace-draco-loader-test: %s unexpectedly succeeded\n", label);
 		return false;
 	}
 
 	if (!expect(error.code == expect_error, "unexpected error code"))
-		fprintf(stderr, "scene-3d-draco-loader-test: %s got %s\n", label,
-			scene_3d_gltf_error_to_string(error.code));
+		fprintf(stderr, "vspace-draco-loader-test: %s got %s\n", label,
+			vspace_gltf_error_to_string(error.code));
 	matched = error.code == expect_error;
 
-	scene_3d_gltf_free_cpu_payload(&payload);
-	scene_3d_gltf_clear_error(&error);
+	vspace_gltf_free_cpu_payload(&payload);
+	vspace_gltf_clear_error(&error);
 	return matched;
 }
 
 int main()
 {
 	bool ok = true;
-	struct scene_3d_gltf_load_options draco_auto = {0};
-	struct scene_3d_gltf_load_options draco_disabled = {0};
+	struct vspace_gltf_load_options draco_auto = {0};
+	struct vspace_gltf_load_options draco_disabled = {0};
 
 	if (!obs_startup("en-US", NULL, NULL)) {
-		fprintf(stderr, "scene-3d-draco-loader-test: obs_startup failed\n");
+		fprintf(stderr, "vspace-draco-loader-test: obs_startup failed\n");
 		return 1;
 	}
 
@@ -138,9 +138,9 @@ int main()
 	/* Smoke: Draco extension exists but decoder is unavailable -> accessor fallback remains stable. */
 	{
 		const bool passed = run_success_case("smoke-draco-fallback", "draco-fallback.gltf", &draco_auto, true,
-						     SCENE_3D_DECODE_PATH_ACCESSOR);
+						     VSPACE_DECODE_PATH_ACCESSOR);
 		if (!passed)
-			fprintf(stderr, "scene-3d-draco-loader-test: smoke-draco-fallback failed\n");
+			fprintf(stderr, "vspace-draco-loader-test: smoke-draco-fallback failed\n");
 		ok &= passed;
 	}
 
@@ -148,27 +148,27 @@ int main()
 	{
 		const bool passed =
 			run_success_case("regression-draco-disabled", "draco-fallback.gltf", &draco_disabled, true,
-					 SCENE_3D_DECODE_PATH_ACCESSOR);
+					 VSPACE_DECODE_PATH_ACCESSOR);
 		if (!passed)
-			fprintf(stderr, "scene-3d-draco-loader-test: regression-draco-disabled failed\n");
+			fprintf(stderr, "vspace-draco-loader-test: regression-draco-disabled failed\n");
 		ok &= passed;
 	}
 
 	/* Regression: Non-Draco assets still decode through accessor path. */
 	{
 		const bool passed = run_success_case("regression-accessor", "accessor-only.gltf", &draco_auto, false,
-						     SCENE_3D_DECODE_PATH_ACCESSOR);
+						     VSPACE_DECODE_PATH_ACCESSOR);
 		if (!passed)
-			fprintf(stderr, "scene-3d-draco-loader-test: regression-accessor failed\n");
+			fprintf(stderr, "vspace-draco-loader-test: regression-accessor failed\n");
 		ok &= passed;
 	}
 
 	/* Negative guard: extension-only payload must fail with deterministic decoder error. */
 	{
 		const bool passed = run_failure_case("guard-draco-requires-decoder", "draco-requires-decoder.gltf",
-						     &draco_auto, SCENE_3D_GLTF_ERROR_DRACO_DECODER_UNAVAILABLE);
+						     &draco_auto, VSPACE_GLTF_ERROR_DRACO_DECODER_UNAVAILABLE);
 		if (!passed)
-			fprintf(stderr, "scene-3d-draco-loader-test: guard-draco-requires-decoder failed\n");
+			fprintf(stderr, "vspace-draco-loader-test: guard-draco-requires-decoder failed\n");
 		ok &= passed;
 	}
 
@@ -177,6 +177,6 @@ int main()
 	if (!ok)
 		return 1;
 
-	printf("scene-3d-draco-loader-test: success\n");
+	printf("vspace-draco-loader-test: success\n");
 	return 0;
 }

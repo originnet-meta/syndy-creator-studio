@@ -19,10 +19,10 @@
 #include <obs-module.h>
 #include <util/platform.h>
 
-#include "scene-3d-source.h"
+#include "vspace-source.h"
 
 OBS_DECLARE_MODULE()
-OBS_MODULE_USE_DEFAULT_LOCALE("scene-3d-source", "en-US")
+OBS_MODULE_USE_DEFAULT_LOCALE("vspace-source", "en-US")
 MODULE_EXPORT const char *obs_module_description(void)
 {
 	return "OBS scene 3D source";
@@ -30,17 +30,17 @@ MODULE_EXPORT const char *obs_module_description(void)
 
 static void verify_data_paths(void)
 {
-	char *effect_path = obs_module_file("effects/scene-3d.effect");
+	char *effect_path = obs_module_file("effects/vspace.effect");
 
 	if (!effect_path) {
-		blog(LOG_WARNING, "[scene-3d-source] Could not resolve effects/scene-3d.effect.");
+		blog(LOG_WARNING, "[vspace-source] Could not resolve effects/vspace.effect.");
 		return;
 	}
 
 	if (!os_file_exists(effect_path))
-		blog(LOG_WARNING, "[scene-3d-source] Effect file missing: %s", effect_path);
+		blog(LOG_WARNING, "[vspace-source] Effect file missing: %s", effect_path);
 	else
-		blog(LOG_DEBUG, "[scene-3d-source] Effect file: %s", effect_path);
+		blog(LOG_DEBUG, "[vspace-source] Effect file: %s", effect_path);
 
 	bfree(effect_path);
 }
@@ -48,6 +48,6 @@ static void verify_data_paths(void)
 bool obs_module_load(void)
 {
 	verify_data_paths();
-	obs_register_source(&scene_3d_source_info);
+	obs_register_source(&vspace_source_info);
 	return true;
 }

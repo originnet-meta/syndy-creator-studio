@@ -9,7 +9,7 @@
 
 # Scene 3D Draco Test Fixtures
 
-This folder contains deterministic fixtures for `scene-3d-draco-loader-test`.
+This folder contains deterministic fixtures for `vspace-draco-loader-test`.
 
 ## Files
 

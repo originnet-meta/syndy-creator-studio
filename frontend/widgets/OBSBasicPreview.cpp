@@ -639,10 +639,10 @@ void OBSBasicPreview::mouseDoubleClickEvent(QMouseEvent *event)
 
 	const char *id = obs_source_get_unversioned_id(source);
 	const uint32_t flags = obs_source_get_output_flags(source);
-	const bool is_scene_3d_source = id && strcmp(id, "scene_3d_source") == 0;
+	const bool is_vspace_source = id && strcmp(id, "vspace_source") == 0;
 	const bool can_interact = (flags & OBS_SOURCE_INTERACTION) != 0;
 
-	if (is_scene_3d_source && can_interact)
+	if (is_vspace_source && can_interact)
 		OBSBasic::Get()->CreateInteractionWindow(source);
 }
 

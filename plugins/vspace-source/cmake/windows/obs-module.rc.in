@@ -1,4 +1,3 @@
-#[[
 /******************************************************************************
     Copyright (C) 2026 Uniflow, Inc.
     Author: Kim Taehyung <gaiaengine@gmail.com>
@@ -16,28 +15,28 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ******************************************************************************/
-]]
 
-cmake_minimum_required(VERSION 3.28...3.30)
+1 VERSIONINFO
+FILEVERSION ${OBS_VERSION_MAJOR},${OBS_VERSION_MINOR},${OBS_VERSION_PATCH},0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "${OBS_COMPANY_NAME}"
+      VALUE "FileDescription", "OBS scene 3D source module"
+      VALUE "FileVersion", "${OBS_VERSION_CANONICAL}"
+      VALUE "ProductName", "${OBS_PRODUCT_NAME}"
+      VALUE "ProductVersion", "${OBS_VERSION_CANONICAL}"
+      VALUE "Comments", "${OBS_COMMENTS}"
+      VALUE "LegalCopyright", "${OBS_LEGAL_COPYRIGHT}"
+      VALUE "InternalName", "vspace-source"
+      VALUE "OriginalFilename", "vspace-source"
+    END
+  END
 
-add_library(scene-3d-source MODULE)
-add_library(OBS::scene-3d-source ALIAS scene-3d-source)
-
-target_sources(
-  scene-3d-source
-  PRIVATE
-    scene-3d-plugin.c
-    scene-3d-source.c
-    scene-3d-source.h
-    scene-3d-gltf-loader.c
-    scene-3d-gltf-loader.h
-)
-
-target_link_libraries(scene-3d-source PRIVATE OBS::libobs $<$<PLATFORM_ID:Windows>:OBS::w32-pthreads>)
-
-if(OS_WINDOWS)
-  configure_file(cmake/windows/obs-module.rc.in scene-3d-source.rc)
-  target_sources(scene-3d-source PRIVATE scene-3d-source.rc)
-endif()
-
-set_target_properties_obs(scene-3d-source PROPERTIES FOLDER plugins PREFIX "")
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0409, 0x04B0
+  END
+END

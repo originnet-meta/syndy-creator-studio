@@ -1,3 +1,4 @@
+#[[
 /******************************************************************************
     Copyright (C) 2026 Uniflow, Inc.
     Author: Kim Taehyung <gaiaengine@gmail.com>
@@ -15,28 +16,36 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ******************************************************************************/
+]]
 
-1 VERSIONINFO
-FILEVERSION ${OBS_VERSION_MAJOR},${OBS_VERSION_MINOR},${OBS_VERSION_PATCH},0
-BEGIN
-  BLOCK "StringFileInfo"
-  BEGIN
-    BLOCK "040904B0"
-    BEGIN
-      VALUE "CompanyName", "${OBS_COMPANY_NAME}"
-      VALUE "FileDescription", "OBS scene 3D source module"
-      VALUE "FileVersion", "${OBS_VERSION_CANONICAL}"
-      VALUE "ProductName", "${OBS_PRODUCT_NAME}"
-      VALUE "ProductVersion", "${OBS_VERSION_CANONICAL}"
-      VALUE "Comments", "${OBS_COMMENTS}"
-      VALUE "LegalCopyright", "${OBS_LEGAL_COPYRIGHT}"
-      VALUE "InternalName", "scene-3d-source"
-      VALUE "OriginalFilename", "scene-3d-source"
-    END
-  END
+cmake_minimum_required(VERSION 3.28...3.30)
 
-  BLOCK "VarFileInfo"
-  BEGIN
-    VALUE "Translation", 0x0409, 0x04B0
-  END
-END
+find_package(jansson REQUIRED)
+
+add_library(vspace-source MODULE)
+add_library(OBS::vspace-source ALIAS vspace-source)
+
+target_sources(
+  vspace-source
+  PRIVATE
+    vspace-plugin.c
+    vspace-source.c
+    vspace-source.h
+    vspace-gltf-loader.c
+    vspace-gltf-loader.h
+)
+
+target_link_libraries(
+  vspace-source
+  PRIVATE
+    OBS::libobs
+    $<$<PLATFORM_ID:Windows>:OBS::w32-pthreads>
+    jansson::jansson
+)
+
+if(OS_WINDOWS)
+  configure_file(cmake/windows/obs-module.rc.in vspace-source.rc)
+  target_sources(vspace-source PRIVATE vspace-source.rc)
+endif()
+
+set_target_properties_obs(vspace-source PROPERTIES FOLDER plugins PREFIX "")

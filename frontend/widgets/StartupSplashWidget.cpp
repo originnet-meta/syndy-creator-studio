@@ -18,64 +18,83 @@
 
 #include "StartupSplashWidget.hpp"
 
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPixmap>
 #include <QProgressBar>
+#include <QScreen>
+#include <QStackedLayout>
 #include <QVBoxLayout>
 
 namespace {
 
-constexpr int kSplashWidth = 420;
-constexpr int kSplashHeight = 320;
+constexpr int kSplashFallbackWidth = 420;
+constexpr int kSplashFallbackHeight = 630;
+constexpr int kSplashMaxScreenPercent = 75;
+constexpr auto kSplashImagePath = ":/res/images/startup-splash-image-rounded_02.png";
 
 } // namespace
 
 StartupSplashWidget::StartupSplashWidget(QWidget *parent) : QWidget(parent)
 {
 	setWindowFlags(Qt::SplashScreen | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
-	setAttribute(Qt::WA_TranslucentBackground, false);
+	setAttribute(Qt::WA_TranslucentBackground, true);
+	setAutoFillBackground(false);
 	setObjectName("startupSplashWidget");
-	setFixedSize(kSplashWidth, kSplashHeight);
+	QPixmap splashImage(kSplashImagePath);
+	if (splashImage.isNull())
+		splashImage.load(":/res/images/obs.png");
 
-	auto *rootLayout = new QVBoxLayout(this);
-	rootLayout->setContentsMargins(0, 0, 0, 0);
-	rootLayout->setSpacing(0);
+	QSize targetSize = splashImage.isNull() ? QSize(kSplashFallbackWidth, kSplashFallbackHeight) : splashImage.size();
+	if (const QScreen *screen = QGuiApplication::primaryScreen()) {
+		const QSize availableSize = screen->availableGeometry().size();
+		QSize maxSize((availableSize.width() * kSplashMaxScreenPercent) / 100,
+			      (availableSize.height() * kSplashMaxScreenPercent) / 100);
+		if (maxSize.width() > 0 && maxSize.height() > 0 && (targetSize.width() > maxSize.width() ||
+								      targetSize.height() > maxSize.height())) {
+			targetSize = targetSize.scaled(maxSize, Qt::KeepAspectRatio);
+		}
+	}
+	setFixedSize(targetSize);
+
+	auto *stackLayout = new QStackedLayout(this);
+	stackLayout->setContentsMargins(0, 0, 0, 0);
+	stackLayout->setStackingMode(QStackedLayout::StackAll);
 
 	auto *imageLabel = new QLabel(this);
 	imageLabel->setAlignment(Qt::AlignCenter);
-	imageLabel->setMinimumHeight(200);
+	imageLabel->setScaledContents(true);
 	imageLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-	QPixmap splashImage(":/res/images/obs.png");
 	if (!splashImage.isNull()) {
-		imageLabel->setPixmap(splashImage.scaled(220, 220, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-	} else {
-		imageLabel->setText("OBS");
+		imageLabel->setPixmap(splashImage.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation));
 	}
-	rootLayout->addWidget(imageLabel);
+	stackLayout->addWidget(imageLabel);
 
-	auto *bottomWidget = new QWidget(this);
-	bottomWidget->setObjectName("startupSplashBottom");
-	auto *bottomLayout = new QVBoxLayout(bottomWidget);
-	bottomLayout->setContentsMargins(20, 14, 20, 18);
-	bottomLayout->setSpacing(6);
+	auto *overlayWidget = new QWidget(this);
+	overlayWidget->setObjectName("startupSplashOverlay");
+	overlayWidget->setAttribute(Qt::WA_TranslucentBackground, true);
+	auto *overlayLayout = new QVBoxLayout(overlayWidget);
+	overlayLayout->setContentsMargins(28, 24, 28, 24);
+	overlayLayout->setSpacing(6);
+	overlayLayout->addStretch();
 
-	statusLabel = new QLabel(bottomWidget);
+	statusLabel = new QLabel(overlayWidget);
 	statusLabel->setObjectName("startupSplashStatus");
 	statusLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-	bottomLayout->addWidget(statusLabel);
+	overlayLayout->addWidget(statusLabel);
 
-	moduleLabel = new QLabel(bottomWidget);
+	moduleLabel = new QLabel(overlayWidget);
 	moduleLabel->setObjectName("startupSplashModule");
 	moduleLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 	moduleLabel->setTextInteractionFlags(Qt::NoTextInteraction);
 	moduleLabel->setWordWrap(false);
-	bottomLayout->addWidget(moduleLabel);
+	overlayLayout->addWidget(moduleLabel);
 
 	auto *progressRow = new QHBoxLayout();
-	progressRow->setSpacing(10);
+	progressRow->setSpacing(0);
 
-	progressBar = new QProgressBar(bottomWidget);
+	progressBar = new QProgressBar(overlayWidget);
 	progressBar->setObjectName("startupSplashProgress");
 	progressBar->setRange(0, 100);
 	progressBar->setValue(0);
@@ -83,45 +102,49 @@ StartupSplashWidget::StartupSplashWidget(QWidget *parent) : QWidget(parent)
 	progressBar->setFormat("%p%");
 	progressRow->addWidget(progressBar, 1);
 
-	stepLabel = new QLabel(bottomWidget);
+	stepLabel = new QLabel(overlayWidget);
 	stepLabel->setObjectName("startupSplashStep");
 	stepLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-	progressRow->addWidget(stepLabel);
+	stepLabel->hide();
 
-	bottomLayout->addLayout(progressRow);
-	rootLayout->addWidget(bottomWidget);
+	overlayLayout->addLayout(progressRow);
+	stackLayout->addWidget(overlayWidget);
+	stackLayout->setCurrentWidget(overlayWidget);
 
 	setStyleSheet(
 		"#startupSplashWidget {"
-		"  background-color: #12131a;"
-		"  border: 1px solid #2c313a;"
+		"  background: transparent;"
 		"}"
-		"#startupSplashBottom {"
-		"  background-color: #1b1f28;"
+		"#startupSplashOverlay {"
+		"  background: transparent;"
 		"}"
 		"#startupSplashStatus {"
-		"  color: #f3f5f8;"
+		"  background: transparent;"
+		"  color: #f7f8fb;"
 		"  font-size: 13px;"
 		"  font-weight: 600;"
 		"}"
 		"#startupSplashModule {"
-		"  color: #c3c9d4;"
+		"  background: transparent;"
+		"  color: #e5e8ef;"
 		"  font-size: 12px;"
 		"}"
 		"#startupSplashStep {"
-		"  color: #9ea5b2;"
+		"  background: transparent;"
+		"  color: #e2e6ee;"
 		"  font-size: 11px;"
 		"}"
 		"#startupSplashProgress {"
 		"  min-height: 12px;"
-		"  border: 1px solid #2c313a;"
+		"  background: transparent;"
+		"  border: none;"
 		"  border-radius: 6px;"
 		"  text-align: center;"
-		"  color: #f3f5f8;"
+		"  color: #f7f8fb;"
 		"}"
 		"#startupSplashProgress::chunk {"
 		"  border-radius: 5px;"
-		"  background-color: #f05a28;"
+		"  background-color: rgba(240, 90, 40, 220);"
 		"}");
 
 	SetStatusText("Starting up");
@@ -199,3 +222,4 @@ void StartupSplashWidget::RefreshStepLabel()
 		stepLabel->setText(stepText);
 	}
 }
+

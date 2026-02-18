@@ -20,4 +20,4 @@
 
 #include <obs-module.h>
 
-extern struct obs_source_info scene_3d_source_info;
+extern struct obs_source_info vspace_source_info;

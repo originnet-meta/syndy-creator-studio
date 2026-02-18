@@ -9,21 +9,21 @@
 
 # Scene 3D Source Draco Validation Matrix
 
-This document defines IMP-08 validation scope for `scene-3d-source` with a Draco-first focus.
+This document defines IMP-08 validation scope for `vspace-source` with a Draco-first focus.
 
 ## 1) Scenario Classes
 
 | Class | ID | Goal | Execution |
 |---|---|---|---|
-| Smoke | `DRACO-SMOKE-01` | Ensure startup decode path is not broken by Draco extension metadata. | Automated (`scene-3d-draco-loader-test`) |
-| Regression | `DRACO-REG-01` | Ensure accessor-only models continue to decode. | Automated (`scene-3d-draco-loader-test`) |
-| Regression | `DRACO-REG-02` | Ensure `draco_enabled=false` still loads extension-tagged primitive through accessor fallback. | Automated (`scene-3d-draco-loader-test`) |
-| Guard | `DRACO-GUARD-01` | Ensure extension-only primitive fails deterministically when decoder is unavailable. | Automated (`scene-3d-draco-loader-test`) |
+| Smoke | `DRACO-SMOKE-01` | Ensure startup decode path is not broken by Draco extension metadata. | Automated (`vspace-draco-loader-test`) |
+| Regression | `DRACO-REG-01` | Ensure accessor-only models continue to decode. | Automated (`vspace-draco-loader-test`) |
+| Regression | `DRACO-REG-02` | Ensure `draco_enabled=false` still loads extension-tagged primitive through accessor fallback. | Automated (`vspace-draco-loader-test`) |
+| Guard | `DRACO-GUARD-01` | Ensure extension-only primitive fails deterministically when decoder is unavailable. | Automated (`vspace-draco-loader-test`) |
 | Performance | `DRACO-PERF-01` | Measure hitch behavior during repeated large-model reloads (load/update loop). | Manual benchmark pass (not CI-gated) |
 
 ## 2) Test-Input Based Automated Validation Points
 
-Fixtures are located in `test/test-input/data/scene-3d/`.
+Fixtures are located in `test/test-input/data/vspace/`.
 
 | Fixture | Covered scenario | Expected result |
 |---|---|---|
@@ -32,15 +32,15 @@ Fixtures are located in `test/test-input/data/scene-3d/`.
 | `draco-requires-decoder.gltf` | `DRACO-GUARD-01` | Load fails with `draco_decoder_unavailable` |
 
 Harness entry point:
-- Target: `scene-3d-draco-loader-test`
-- Source: `test/win/scene-3d-draco-loader-test.cpp`
+- Target: `vspace-draco-loader-test`
+- Source: `test/win/vspace-draco-loader-test.cpp`
 - Build wiring: `test/win/CMakeLists.txt`
 
 ## 3) D3D11 Manual Visual Checklist (Draco-focused)
 
 Preconditions:
 1. Renderer set to D3D11.
-2. `scene-3d-source` plugin loaded.
+2. `vspace-source` plugin loaded.
 3. At least one Draco-extension model and one accessor-only model available.
 
 Checklist:
@@ -55,9 +55,9 @@ Checklist:
 Recommended minimum CI set for Windows D3D11 branch protection:
 1. Configure/build test target:
    - `cmake --preset windows-x64 -DBUILD_TESTS=ON`
-   - `cmake --build --preset windows-x64 --target scene-3d-draco-loader-test`
+   - `cmake --build --preset windows-x64 --target vspace-draco-loader-test`
 2. Execute harness:
-   - `build_x64/libobs/RelWithDebInfo/scene-3d-draco-loader-test.exe`
+   - `build_x64/libobs/RelWithDebInfo/vspace-draco-loader-test.exe`
    - If needed, prepend runtime deps to `PATH`:
      - `build_x64/deps/w32-pthreads/RelWithDebInfo`
      - `.deps/obs-deps-2025-08-23-x64/bin`

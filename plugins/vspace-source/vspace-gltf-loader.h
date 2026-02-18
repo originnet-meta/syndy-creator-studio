@@ -30,25 +30,26 @@
 #include <stddef.h>
 #include <stdint.h>
 
-enum scene_3d_gltf_error_code {
-	SCENE_3D_GLTF_SUCCESS = 0,
-	SCENE_3D_GLTF_ERROR_INVALID_ARGUMENT,
-	SCENE_3D_GLTF_ERROR_IO,
-	SCENE_3D_GLTF_ERROR_PARSE,
-	SCENE_3D_GLTF_ERROR_UNSUPPORTED,
-	SCENE_3D_GLTF_ERROR_DRACO_DECODER_UNAVAILABLE,
-	SCENE_3D_GLTF_ERROR_DRACO_DECODE_FAILED,
-	SCENE_3D_GLTF_ERROR_ACCESSOR_DECODE_FAILED,
+enum vspace_gltf_error_code {
+	VSPACE_GLTF_SUCCESS = 0,
+	VSPACE_GLTF_ERROR_INVALID_ARGUMENT,
+	VSPACE_GLTF_ERROR_IO,
+	VSPACE_GLTF_ERROR_PARSE,
+	VSPACE_GLTF_ERROR_UNSUPPORTED,
+	VSPACE_GLTF_ERROR_DRACO_DECODER_UNAVAILABLE,
+	VSPACE_GLTF_ERROR_DRACO_DECODE_FAILED,
+	VSPACE_GLTF_ERROR_ACCESSOR_DECODE_FAILED,
 };
 
-enum scene_3d_decode_path {
-	SCENE_3D_DECODE_PATH_ACCESSOR = 0,
-	SCENE_3D_DECODE_PATH_DRACO,
+enum vspace_decode_path {
+	VSPACE_DECODE_PATH_ACCESSOR = 0,
+	VSPACE_DECODE_PATH_DRACO,
 };
 
-struct scene_3d_cpu_primitive_payload {
-	enum scene_3d_decode_path decode_path;
+struct vspace_cpu_primitive_payload {
+	enum vspace_decode_path decode_path;
 	bool used_draco_extension;
+	int32_t material_index;
 
 	float *positions;
 	float *normals;
@@ -61,34 +62,34 @@ struct scene_3d_cpu_primitive_payload {
 	char *base_color_texture;
 };
 
-struct scene_3d_cpu_mesh_payload {
+struct vspace_cpu_mesh_payload {
 	char *name;
-	struct scene_3d_cpu_primitive_payload *primitives;
+	struct vspace_cpu_primitive_payload *primitives;
 	size_t primitive_count;
 };
 
-struct scene_3d_cpu_payload {
-	struct scene_3d_cpu_mesh_payload *meshes;
+struct vspace_cpu_payload {
+	struct vspace_cpu_mesh_payload *meshes;
 	size_t mesh_count;
 };
 
-struct scene_3d_gltf_load_options {
+struct vspace_gltf_load_options {
 	bool draco_enabled;
 	const char *draco_decoder;
 };
 
-struct scene_3d_gltf_error {
-	enum scene_3d_gltf_error_code code;
+struct vspace_gltf_error {
+	enum vspace_gltf_error_code code;
 	char *message;
 };
 
-const char *scene_3d_gltf_error_to_string(enum scene_3d_gltf_error_code code);
+const char *vspace_gltf_error_to_string(enum vspace_gltf_error_code code);
 
-void scene_3d_gltf_clear_error(struct scene_3d_gltf_error *error);
-void scene_3d_gltf_free_cpu_payload(struct scene_3d_cpu_payload *payload);
+void vspace_gltf_clear_error(struct vspace_gltf_error *error);
+void vspace_gltf_free_cpu_payload(struct vspace_cpu_payload *payload);
 
-bool scene_3d_gltf_load_cpu_payload(const char *model_path, struct scene_3d_cpu_payload *payload,
-				    const struct scene_3d_gltf_load_options *options,
-				    struct scene_3d_gltf_error *error);
+bool vspace_gltf_load_cpu_payload(const char *model_path, struct vspace_cpu_payload *payload,
+				    const struct vspace_gltf_load_options *options,
+				    struct vspace_gltf_error *error);
 
-bool scene_3d_gltf_model_uses_draco(const char *model_path);
+bool vspace_gltf_model_uses_draco(const char *model_path);
