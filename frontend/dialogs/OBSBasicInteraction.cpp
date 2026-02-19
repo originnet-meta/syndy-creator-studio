@@ -80,6 +80,16 @@ struct VspaceCameraState {
 	float zfar;
 };
 
+struct VspaceModelBounds {
+	bool available;
+	float min_x;
+	float min_y;
+	float min_z;
+	float max_x;
+	float max_y;
+	float max_z;
+};
+
 struct GizmoAxis {
 	char label;
 	float screen_x;
@@ -88,7 +98,186 @@ struct GizmoAxis {
 	struct vec4 color;
 };
 
+struct VspaceInspectGridRenderer {
+	gs_effect_t *effect = nullptr;
+	gs_vertbuffer_t *triangle = nullptr;
+	gs_eparam_t *camera_position = nullptr;
+	gs_eparam_t *grid_forward = nullptr;
+	gs_eparam_t *grid_right = nullptr;
+	gs_eparam_t *grid_up = nullptr;
+	gs_eparam_t *grid_tan_half_fov = nullptr;
+	gs_eparam_t *grid_aspect = nullptr;
+	gs_eparam_t *grid_step = nullptr;
+	gs_eparam_t *grid_origin = nullptr;
+	gs_eparam_t *grid_extent = nullptr;
+};
+
 static void DrawGizmoLine(float x1, float y1, float x2, float y2, float thickness);
+
+static float SnapGridStep125(float raw_step)
+{
+	float step = fmaxf(raw_step, 0.01f);
+	const float magnitude = powf(10.0f, floorf(log10f(step)));
+	const float normalized = step / magnitude;
+
+	if (normalized < 2.0f)
+		return magnitude;
+	if (normalized < 5.0f)
+		return 2.0f * magnitude;
+	return 5.0f * magnitude;
+}
+
+static bool EnsureInspectGridRenderer(VspaceInspectGridRenderer &renderer)
+{
+	static const char *effect_source = R"OBS_EFFECT(
+uniform float3 effect_camera_position = {0.0, 0.0, -3.0};
+uniform float3 effect_grid_forward = {0.0, 1.0, 0.0};
+uniform float3 effect_grid_right = {1.0, 0.0, 0.0};
+uniform float3 effect_grid_up = {0.0, 0.0, 1.0};
+uniform float effect_grid_tan_half_fov = 0.4663077;
+uniform float effect_grid_aspect = 1.7777778;
+uniform float effect_grid_step = 1.0;
+uniform float2 effect_grid_origin = {0.0, 0.0};
+uniform float effect_grid_extent = 64.0;
+uniform float4 effect_grid_color = {0.52, 0.52, 0.52, 0.68};
+uniform float4 effect_grid_x_axis_color = {0.95, 0.32, 0.32, 0.92};
+uniform float4 effect_grid_y_axis_color = {0.36, 0.88, 0.38, 0.92};
+uniform float effect_grid_line_width = 0.25;
+uniform float effect_grid_axis_width = 1.8;
+
+struct VertDataGrid {
+	float4 pos : POSITION;
+};
+
+struct GridDataOut {
+	float4 pos : POSITION;
+	float2 ndc : TEXCOORD0;
+};
+
+GridDataOut VSGrid(VertDataGrid v)
+{
+	GridDataOut v_out;
+	v_out.pos = float4(v.pos.xy, 0.0, 1.0);
+	v_out.ndc = v.pos.xy;
+	return v_out;
+}
+
+float grid_axis_alpha(float dist, float width_px)
+{
+	float fw = max(fwidth(dist), 1e-6f);
+	float dist_px = abs(dist) / fw;
+	return 1.0f - smoothstep(width_px, width_px + 1.0f, dist_px);
+}
+
+float4 PSGrid(GridDataOut v) : TARGET
+{
+	float step_value = max(effect_grid_step, 1e-5f);
+	float extent_value = max(effect_grid_extent, step_value);
+	float3 forward = normalize(effect_grid_forward);
+	float3 right = normalize(effect_grid_right);
+	float3 up = normalize(effect_grid_up);
+	float3 ray_dir;
+	float denom;
+	float t;
+	float3 hit;
+	float2 local;
+	float2 grid_uv;
+	float2 grid_uv_fw;
+	float2 grid_dist;
+	float grid_alpha;
+	float axis_x_alpha;
+	float axis_y_alpha;
+	float4 color;
+
+	ray_dir = normalize(forward + right * (v.ndc.x * effect_grid_aspect * effect_grid_tan_half_fov) +
+			    up * (v.ndc.y * effect_grid_tan_half_fov));
+	denom = ray_dir.z;
+
+	if (abs(denom) < 1e-6f)
+		discard;
+
+	t = -effect_camera_position.z / denom;
+	if (t <= 0.0f)
+		discard;
+
+	hit = effect_camera_position + ray_dir * t;
+	local = hit.xy - effect_grid_origin;
+	if (abs(local.x) > extent_value || abs(local.y) > extent_value)
+		discard;
+
+	grid_uv = local / step_value;
+	grid_uv_fw = max(fwidth(grid_uv), float2(1e-6f, 1e-6f));
+	grid_dist = abs(frac(grid_uv - 0.5f) - 0.5f) / grid_uv_fw;
+	grid_alpha = 1.0f - smoothstep(effect_grid_line_width, effect_grid_line_width + 1.0f,
+				       min(grid_dist.x, grid_dist.y));
+
+	axis_x_alpha = grid_axis_alpha(hit.y, effect_grid_axis_width);
+	axis_y_alpha = grid_axis_alpha(hit.x, effect_grid_axis_width);
+
+	color = float4(effect_grid_color.rgb, effect_grid_color.a * grid_alpha);
+	color = lerp(color, effect_grid_y_axis_color, axis_y_alpha);
+	color = lerp(color, effect_grid_x_axis_color, axis_x_alpha);
+
+	if (color.a < 0.001f)
+		discard;
+
+	return color;
+}
+
+technique DrawGrid
+{
+	pass
+	{
+		vertex_shader = VSGrid(v);
+		pixel_shader = PSGrid(v);
+	}
+}
+)OBS_EFFECT";
+
+	if (!renderer.effect) {
+		renderer.effect = gs_effect_create(effect_source, "vspace-inspect-grid.effect", nullptr);
+		if (renderer.effect) {
+			renderer.camera_position = gs_effect_get_param_by_name(renderer.effect, "effect_camera_position");
+			renderer.grid_forward = gs_effect_get_param_by_name(renderer.effect, "effect_grid_forward");
+			renderer.grid_right = gs_effect_get_param_by_name(renderer.effect, "effect_grid_right");
+			renderer.grid_up = gs_effect_get_param_by_name(renderer.effect, "effect_grid_up");
+			renderer.grid_tan_half_fov = gs_effect_get_param_by_name(renderer.effect, "effect_grid_tan_half_fov");
+			renderer.grid_aspect = gs_effect_get_param_by_name(renderer.effect, "effect_grid_aspect");
+			renderer.grid_step = gs_effect_get_param_by_name(renderer.effect, "effect_grid_step");
+			renderer.grid_origin = gs_effect_get_param_by_name(renderer.effect, "effect_grid_origin");
+			renderer.grid_extent = gs_effect_get_param_by_name(renderer.effect, "effect_grid_extent");
+		}
+	}
+
+	if (!renderer.triangle) {
+		struct gs_vb_data *vb_data = gs_vbdata_create();
+		if (vb_data) {
+			vb_data->num = 3;
+			vb_data->points = (struct vec3 *)bmalloc(sizeof(struct vec3) * 3);
+			vb_data->num_tex = 0;
+			vb_data->tvarray = nullptr;
+			vb_data->normals = nullptr;
+			vb_data->tangents = nullptr;
+			vb_data->colors = nullptr;
+
+			if (!vb_data->points) {
+				gs_vbdata_destroy(vb_data);
+				vb_data = nullptr;
+			} else {
+				vec3_set(vb_data->points + 0, -1.0f, -1.0f, 0.0f);
+				vec3_set(vb_data->points + 1, -1.0f, 3.0f, 0.0f);
+				vec3_set(vb_data->points + 2, 3.0f, -1.0f, 0.0f);
+				renderer.triangle = gs_vertexbuffer_create(vb_data, 0);
+				if (!renderer.triangle)
+					gs_vbdata_destroy(vb_data);
+			}
+		}
+	}
+
+	return renderer.effect && renderer.triangle && renderer.camera_position && renderer.grid_forward &&
+	       renderer.grid_right && renderer.grid_up && renderer.grid_tan_half_fov && renderer.grid_aspect &&
+	       renderer.grid_step && renderer.grid_origin && renderer.grid_extent;
+}
 
 static float VecLength(float x, float y, float z)
 {
@@ -211,6 +400,103 @@ static bool GetVspaceCameraState(obs_source_t *source, VspaceCameraState &state)
 	return true;
 }
 
+static bool GetVspaceModelBounds(obs_source_t *source, VspaceModelBounds &bounds)
+{
+	proc_handler_t *proc_handler = nullptr;
+	calldata_t cd = {};
+	bool success = false;
+
+	bounds = {false, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+
+	if (!source || !IsVspaceSource(source))
+		return false;
+
+	proc_handler = obs_source_get_proc_handler(source);
+	if (!proc_handler)
+		return false;
+
+	success = proc_handler_call(proc_handler, "get_vspace_model_bounds", &cd);
+	if (!success) {
+		calldata_free(&cd);
+		return false;
+	}
+
+	if (!calldata_bool(&cd, "available")) {
+		calldata_free(&cd);
+		return false;
+	}
+
+	bounds.available = true;
+	bounds.min_x = (float)calldata_float(&cd, "min_x");
+	bounds.min_y = (float)calldata_float(&cd, "min_y");
+	bounds.min_z = (float)calldata_float(&cd, "min_z");
+	bounds.max_x = (float)calldata_float(&cd, "max_x");
+	bounds.max_y = (float)calldata_float(&cd, "max_y");
+	bounds.max_z = (float)calldata_float(&cd, "max_z");
+	calldata_free(&cd);
+
+	return true;
+}
+
+static void SetVspaceInspectRenderMode(obs_source_t *source, bool enabled)
+{
+	proc_handler_t *proc_handler = nullptr;
+	calldata_t cd = {};
+
+	if (!source || !IsVspaceSource(source))
+		return;
+
+	proc_handler = obs_source_get_proc_handler(source);
+	if (!proc_handler)
+		return;
+
+	calldata_set_bool(&cd, "enabled", enabled);
+	proc_handler_call(proc_handler, "set_vspace_inspect_render_mode", &cd);
+	calldata_free(&cd);
+}
+
+static void ResolveProjectionBasis(const VspaceCameraState &state, const VspaceCameraBasis *basis_hint, float &right_x,
+				   float &right_y, float &right_z, float &up_x, float &up_y, float &up_z,
+				   float &forward_x, float &forward_y, float &forward_z)
+{
+	forward_x = state.target_x - state.camera_x;
+	forward_y = state.target_y - state.camera_y;
+	forward_z = state.target_z - state.camera_z;
+	up_x = state.up_x;
+	up_y = state.up_y;
+	up_z = state.up_z;
+
+	NormalizeVec3(forward_x, forward_y, forward_z, 0.0f, 1.0f, 0.0f);
+	NormalizeVec3(up_x, up_y, up_z, 0.0f, 0.0f, 1.0f);
+
+	right_x = forward_y * up_z - forward_z * up_y;
+	right_y = forward_z * up_x - forward_x * up_z;
+	right_z = forward_x * up_y - forward_y * up_x;
+	NormalizeVec3(right_x, right_y, right_z, 1.0f, 0.0f, 0.0f);
+
+	up_x = right_y * forward_z - right_z * forward_y;
+	up_y = right_z * forward_x - right_x * forward_z;
+	up_z = right_x * forward_y - right_y * forward_x;
+	NormalizeVec3(up_x, up_y, up_z, 0.0f, 0.0f, 1.0f);
+
+	if (!basis_hint)
+		return;
+
+	right_x = basis_hint->right_x;
+	right_y = basis_hint->right_y;
+	right_z = basis_hint->right_z;
+	up_x = basis_hint->up_x;
+	up_y = basis_hint->up_y;
+	up_z = basis_hint->up_z;
+	forward_x = basis_hint->forward_x;
+	forward_y = basis_hint->forward_y;
+	forward_z = basis_hint->forward_z;
+
+	NormalizeVec3(right_x, right_y, right_z, 1.0f, 0.0f, 0.0f);
+	NormalizeVec3(up_x, up_y, up_z, 0.0f, 0.0f, 1.0f);
+	NormalizeVec3(forward_x, forward_y, forward_z, 0.0f, 1.0f, 0.0f);
+}
+
 static bool ProjectVspacePointToScreen(const VspaceCameraState &state, uint32_t source_cx, uint32_t source_cy,
 					float world_x, float world_y, float world_z, float &screen_x, float &screen_y)
 {
@@ -238,18 +524,8 @@ static bool ProjectVspacePointToScreen(const VspaceCameraState &state, uint32_t 
 	if (!state.available || source_cx == 0 || source_cy == 0)
 		return false;
 
-	NormalizeVec3(forward_x, forward_y, forward_z, 0.0f, 1.0f, 0.0f);
-	NormalizeVec3(up_x, up_y, up_z, 0.0f, 0.0f, 1.0f);
-
-	right_x = forward_y * up_z - forward_z * up_y;
-	right_y = forward_z * up_x - forward_x * up_z;
-	right_z = forward_x * up_y - forward_y * up_x;
-	NormalizeVec3(right_x, right_y, right_z, 1.0f, 0.0f, 0.0f);
-
-	up_x = right_y * forward_z - right_z * forward_y;
-	up_y = right_z * forward_x - right_x * forward_z;
-	up_z = right_x * forward_y - right_y * forward_x;
-	NormalizeVec3(up_x, up_y, up_z, 0.0f, 0.0f, 1.0f);
+	ResolveProjectionBasis(state, nullptr, right_x, right_y, right_z, up_x, up_y, up_z, forward_x, forward_y,
+			       forward_z);
 
 	dx = world_x - state.camera_x;
 	dy = world_y - state.camera_y;
@@ -279,6 +555,87 @@ static bool ProjectVspacePointToScreen(const VspaceCameraState &state, uint32_t 
 	return true;
 }
 
+static bool ProjectVspaceLineToScreen(const VspaceCameraState &state, const VspaceCameraBasis *basis_hint,
+				      uint32_t source_cx, uint32_t source_cy, float world0_x, float world0_y,
+				      float world0_z, float world1_x, float world1_y, float world1_z,
+				      float &screen0_x, float &screen0_y, float &screen1_x, float &screen1_y)
+{
+	float forward_x = state.target_x - state.camera_x;
+	float forward_y = state.target_y - state.camera_y;
+	float forward_z = state.target_z - state.camera_z;
+	float up_x = state.up_x;
+	float up_y = state.up_y;
+	float up_z = state.up_z;
+	float right_x;
+	float right_y;
+	float right_z;
+	float dx0;
+	float dy0;
+	float dz0;
+	float dx1;
+	float dy1;
+	float dz1;
+	float view0_x;
+	float view0_y;
+	float view0_z;
+	float view1_x;
+	float view1_y;
+	float view1_z;
+	float aspect;
+	float tan_half_fov;
+	float near_z;
+	float t;
+	const float pi = 3.14159265358979323846f;
+
+	if (!state.available || source_cx == 0 || source_cy == 0)
+		return false;
+
+	ResolveProjectionBasis(state, basis_hint, right_x, right_y, right_z, up_x, up_y, up_z, forward_x, forward_y,
+			       forward_z);
+
+	dx0 = world0_x - state.camera_x;
+	dy0 = world0_y - state.camera_y;
+	dz0 = world0_z - state.camera_z;
+	dx1 = world1_x - state.camera_x;
+	dy1 = world1_y - state.camera_y;
+	dz1 = world1_z - state.camera_z;
+
+	view0_x = dx0 * right_x + dy0 * right_y + dz0 * right_z;
+	view0_y = dx0 * up_x + dy0 * up_y + dz0 * up_z;
+	view0_z = dx0 * forward_x + dy0 * forward_y + dz0 * forward_z;
+	view1_x = dx1 * right_x + dy1 * right_y + dz1 * right_z;
+	view1_y = dx1 * up_x + dy1 * up_y + dz1 * up_z;
+	view1_z = dx1 * forward_x + dy1 * forward_y + dz1 * forward_z;
+
+	near_z = fmaxf(state.znear * 0.25f, 0.001f);
+	if (view0_z <= near_z && view1_z <= near_z)
+		return false;
+
+	if (view0_z <= near_z) {
+		t = (near_z - view0_z) / (view1_z - view0_z);
+		view0_x = view0_x + (view1_x - view0_x) * t;
+		view0_y = view0_y + (view1_y - view0_y) * t;
+		view0_z = near_z;
+	} else if (view1_z <= near_z) {
+		t = (near_z - view1_z) / (view0_z - view1_z);
+		view1_x = view1_x + (view0_x - view1_x) * t;
+		view1_y = view1_y + (view0_y - view1_y) * t;
+		view1_z = near_z;
+	}
+
+	aspect = (float)source_cx / (float)source_cy;
+	tan_half_fov = tanf((state.fov_deg * pi / 180.0f) * 0.5f);
+	if (tan_half_fov < 0.001f)
+		tan_half_fov = 0.001f;
+
+	screen0_x = ((view0_x / (view0_z * tan_half_fov * fmaxf(aspect, 0.1f))) * 0.5f + 0.5f) * (float)source_cx;
+	screen0_y = (0.5f - (view0_y / (view0_z * tan_half_fov)) * 0.5f) * (float)source_cy;
+	screen1_x = ((view1_x / (view1_z * tan_half_fov * fmaxf(aspect, 0.1f))) * 0.5f + 0.5f) * (float)source_cx;
+	screen1_y = (0.5f - (view1_y / (view1_z * tan_half_fov)) * 0.5f) * (float)source_cy;
+
+	return isfinite(screen0_x) && isfinite(screen0_y) && isfinite(screen1_x) && isfinite(screen1_y);
+}
+
 static bool LineIntersectsSourceRect(float x0, float y0, float x1, float y1, float width, float height)
 {
 	if ((x0 < 0.0f && x1 < 0.0f) || (x0 > width && x1 > width))
@@ -291,6 +648,8 @@ static bool LineIntersectsSourceRect(float x0, float y0, float x1, float y1, flo
 
 static void DrawVspaceGrid(obs_source_t *source, uint32_t source_cx, uint32_t source_cy)
 {
+	VspaceCameraBasis basis = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f};
+	static VspaceInspectGridRenderer renderer = {};
 	VspaceCameraState state = {};
 	gs_effect_t *solid = nullptr;
 	gs_eparam_t *color_param = nullptr;
@@ -301,16 +660,35 @@ static void DrawVspaceGrid(obs_source_t *source, uint32_t source_cx, uint32_t so
 	float raw_step;
 	float step_power2;
 	float grid_step;
-	const int half_lines = 48;
+	int half_lines;
 	float grid_extent;
+	float tan_half_fov;
+	float aspect;
+	float view_height_world;
+	float units_per_pixel;
+	float required_extent;
+	float grazing_extent;
+	float line_extent_along_x;
+	float line_extent_along_y;
+	float forward_abs_x;
+	float forward_abs_y;
+	float forward_abs_z;
+	float origin_x;
+	float origin_y;
+	bool draw_y_axis;
+	bool draw_x_axis;
+	const int min_half_lines = 48;
+	const int max_half_lines = 320;
 	const float axis_thickness = 2.0f;
 	const float line_thickness = 1.0f;
 	int index;
+	const float pi = 3.14159265358979323846f;
 
 	if (!source || !IsVspaceSource(source))
 		return;
 	if (!GetVspaceCameraState(source, state))
 		return;
+	GetVspaceCameraBasis(source, basis);
 
 	solid = obs_get_base_effect(OBS_EFFECT_SOLID);
 	color_param = solid ? gs_effect_get_param_by_name(solid, "color") : nullptr;
@@ -321,10 +699,73 @@ static void DrawVspaceGrid(obs_source_t *source, uint32_t source_cx, uint32_t so
 				    state.camera_z - state.target_z);
 	if (camera_distance < 1.0f)
 		camera_distance = 1.0f;
-	raw_step = camera_distance / 18.0f;
-	step_power2 = powf(2.0f, floorf(log2f(fmaxf(raw_step, 0.25f))));
-	grid_step = fmaxf(step_power2, 0.25f);
+	aspect = (float)source_cx / (float)source_cy;
+	tan_half_fov = tanf((state.fov_deg * pi / 180.0f) * 0.5f);
+	if (tan_half_fov < 0.001f)
+		tan_half_fov = 0.001f;
+	view_height_world = camera_distance * tan_half_fov;
+	units_per_pixel = (view_height_world * 2.0f) / fmaxf((float)source_cy, 1.0f);
+	raw_step = units_per_pixel * 96.0f;
+	step_power2 = SnapGridStep125(raw_step);
+	grid_step = fmaxf(step_power2, 0.01f);
+	required_extent = fmaxf(camera_distance * 6.0f, fmaxf(view_height_world, view_height_world * aspect) * 1.2f);
+	forward_abs_z = fabsf(basis.forward_z);
+	grazing_extent = fabsf(state.camera_z) / fmaxf(forward_abs_z, 0.02f);
+	required_extent = fmaxf(required_extent, grazing_extent * 1.5f);
+	if (!isfinite(required_extent) || required_extent < 16.0f)
+		required_extent = 16.0f;
+
+	forward_abs_x = fabsf(basis.forward_x);
+	forward_abs_y = fabsf(basis.forward_y);
+	line_extent_along_y = required_extent / fmaxf(forward_abs_y, 0.08f);
+	line_extent_along_x = required_extent / fmaxf(forward_abs_x, 0.08f);
+	line_extent_along_y = clamp(line_extent_along_y, required_extent, required_extent * 24.0f);
+	line_extent_along_x = clamp(line_extent_along_x, required_extent, required_extent * 24.0f);
+
+	half_lines = (int)ceilf(required_extent / grid_step);
+	if (half_lines > max_half_lines) {
+		half_lines = max_half_lines;
+		grid_step = required_extent / (float)half_lines;
+	}
+	half_lines = clamp(half_lines, min_half_lines, max_half_lines);
 	grid_extent = grid_step * (float)half_lines;
+	origin_x = roundf(state.target_x / grid_step) * grid_step;
+	origin_y = roundf(state.target_y / grid_step) * grid_step;
+
+	if (EnsureInspectGridRenderer(renderer)) {
+		struct vec3 camera_position;
+		struct vec3 forward;
+		struct vec3 right;
+		struct vec3 up;
+		struct vec2 origin;
+
+		vec3_set(&camera_position, state.camera_x, state.camera_y, state.camera_z);
+		vec3_set(&forward, basis.forward_x, basis.forward_y, basis.forward_z);
+		vec3_set(&right, basis.right_x, basis.right_y, basis.right_z);
+		vec3_set(&up, basis.up_x, basis.up_y, basis.up_z);
+		vec2_set(&origin, origin_x, origin_y);
+
+		gs_effect_set_vec3(renderer.camera_position, &camera_position);
+		gs_effect_set_vec3(renderer.grid_forward, &forward);
+		gs_effect_set_vec3(renderer.grid_right, &right);
+		gs_effect_set_vec3(renderer.grid_up, &up);
+		gs_effect_set_float(renderer.grid_tan_half_fov, tan_half_fov);
+		gs_effect_set_float(renderer.grid_aspect, aspect);
+		gs_effect_set_float(renderer.grid_step, grid_step);
+		gs_effect_set_vec2(renderer.grid_origin, &origin);
+		gs_effect_set_float(renderer.grid_extent, required_extent);
+
+		gs_blend_state_push();
+		gs_enable_blending(true);
+		gs_blend_function(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA);
+		gs_load_vertexbuffer(renderer.triangle);
+		gs_load_indexbuffer(nullptr);
+		while (gs_effect_loop(renderer.effect, "DrawGrid"))
+			gs_draw(GS_TRIS, 0, 3);
+		gs_load_vertexbuffer(nullptr);
+		gs_blend_state_pop();
+		return;
+	}
 
 	vec4_set(&x_axis_color, 0.95f, 0.32f, 0.32f, 0.92f);
 	vec4_set(&y_axis_color, 0.36f, 0.88f, 0.38f, 0.92f);
@@ -335,41 +776,124 @@ static void DrawVspaceGrid(obs_source_t *source, uint32_t source_cx, uint32_t so
 	gs_blend_function(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA);
 
 	for (index = -half_lines; index <= half_lines; index++) {
-		const float x = (float)index * grid_step;
+		const float x = origin_x + (float)index * grid_step;
 		float x0;
 		float y0;
 		float x1;
 		float y1;
 
-		if (!ProjectVspacePointToScreen(state, source_cx, source_cy, x, -grid_extent, 0.0f, x0, y0))
-			continue;
-		if (!ProjectVspacePointToScreen(state, source_cx, source_cy, x, grid_extent, 0.0f, x1, y1))
+		if (!ProjectVspaceLineToScreen(state, &basis, source_cx, source_cy, x, -line_extent_along_y, 0.0f, x,
+					       line_extent_along_y, 0.0f, x0, y0, x1, y1))
 			continue;
 		if (!LineIntersectsSourceRect(x0, y0, x1, y1, (float)source_cx, (float)source_cy))
 			continue;
+		draw_y_axis = fabsf(x) <= fmaxf(grid_step * 0.02f, 1e-4f);
 
-		gs_effect_set_vec4(color_param, index == 0 ? &y_axis_color : &grid_color);
+		gs_effect_set_vec4(color_param, draw_y_axis ? &y_axis_color : &grid_color);
 		while (gs_effect_loop(solid, "Solid"))
-			DrawGizmoLine(x0, y0, x1, y1, index == 0 ? axis_thickness : line_thickness);
+			DrawGizmoLine(x0, y0, x1, y1, draw_y_axis ? axis_thickness : line_thickness);
 	}
 
 	for (index = -half_lines; index <= half_lines; index++) {
-		const float y = (float)index * grid_step;
+		const float y = origin_y + (float)index * grid_step;
 		float x0;
 		float y0;
 		float x1;
 		float y1;
 
-		if (!ProjectVspacePointToScreen(state, source_cx, source_cy, -grid_extent, y, 0.0f, x0, y0))
+		if (!ProjectVspaceLineToScreen(state, &basis, source_cx, source_cy, -line_extent_along_x, y, 0.0f,
+					       line_extent_along_x, y, 0.0f, x0, y0, x1, y1))
 			continue;
-		if (!ProjectVspacePointToScreen(state, source_cx, source_cy, grid_extent, y, 0.0f, x1, y1))
+		if (!LineIntersectsSourceRect(x0, y0, x1, y1, (float)source_cx, (float)source_cy))
+			continue;
+		draw_x_axis = fabsf(y) <= fmaxf(grid_step * 0.02f, 1e-4f);
+
+		gs_effect_set_vec4(color_param, draw_x_axis ? &x_axis_color : &grid_color);
+		while (gs_effect_loop(solid, "Solid"))
+			DrawGizmoLine(x0, y0, x1, y1, draw_x_axis ? axis_thickness : line_thickness);
+	}
+
+	gs_blend_state_pop();
+}
+
+static void DrawVspaceBoundingBox(obs_source_t *source, uint32_t source_cx, uint32_t source_cy)
+{
+	VspaceCameraState state = {};
+	VspaceModelBounds bounds = {};
+	gs_effect_t *solid = nullptr;
+	gs_eparam_t *color_param = nullptr;
+	struct vec4 bounds_color;
+	float corner_x[8];
+	float corner_y[8];
+	float corner_z[8];
+	int edge_index;
+	static const int edges[12][2] = {
+		{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6},
+		{6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7},
+	};
+	const float line_thickness = 1.5f;
+
+	if (!source || !IsVspaceSource(source))
+		return;
+	if (!GetVspaceCameraState(source, state))
+		return;
+	if (!GetVspaceModelBounds(source, bounds) || !bounds.available)
+		return;
+
+	solid = obs_get_base_effect(OBS_EFFECT_SOLID);
+	color_param = solid ? gs_effect_get_param_by_name(solid, "color") : nullptr;
+	if (!solid || !color_param)
+		return;
+
+	corner_x[0] = bounds.min_x;
+	corner_y[0] = bounds.min_y;
+	corner_z[0] = bounds.min_z;
+	corner_x[1] = bounds.max_x;
+	corner_y[1] = bounds.min_y;
+	corner_z[1] = bounds.min_z;
+	corner_x[2] = bounds.max_x;
+	corner_y[2] = bounds.max_y;
+	corner_z[2] = bounds.min_z;
+	corner_x[3] = bounds.min_x;
+	corner_y[3] = bounds.max_y;
+	corner_z[3] = bounds.min_z;
+	corner_x[4] = bounds.min_x;
+	corner_y[4] = bounds.min_y;
+	corner_z[4] = bounds.max_z;
+	corner_x[5] = bounds.max_x;
+	corner_y[5] = bounds.min_y;
+	corner_z[5] = bounds.max_z;
+	corner_x[6] = bounds.max_x;
+	corner_y[6] = bounds.max_y;
+	corner_z[6] = bounds.max_z;
+	corner_x[7] = bounds.min_x;
+	corner_y[7] = bounds.max_y;
+	corner_z[7] = bounds.max_z;
+
+	vec4_set(&bounds_color, 0.98f, 0.79f, 0.24f, 0.95f);
+
+	gs_blend_state_push();
+	gs_enable_blending(true);
+	gs_blend_function(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA);
+
+	for (edge_index = 0; edge_index < 12; edge_index++) {
+		const int a = edges[edge_index][0];
+		const int b = edges[edge_index][1];
+		float x0;
+		float y0;
+		float x1;
+		float y1;
+
+		if (!ProjectVspacePointToScreen(state, source_cx, source_cy, corner_x[a], corner_y[a], corner_z[a], x0, y0))
+			continue;
+		if (!ProjectVspacePointToScreen(state, source_cx, source_cy, corner_x[b], corner_y[b], corner_z[b], x1, y1))
 			continue;
 		if (!LineIntersectsSourceRect(x0, y0, x1, y1, (float)source_cx, (float)source_cy))
 			continue;
 
-		gs_effect_set_vec4(color_param, index == 0 ? &x_axis_color : &grid_color);
+		gs_effect_set_vec4(color_param, &bounds_color);
 		while (gs_effect_loop(solid, "Solid"))
-			DrawGizmoLine(x0, y0, x1, y1, index == 0 ? axis_thickness : line_thickness);
+			DrawGizmoLine(x0, y0, x1, y1, line_thickness);
 	}
 
 	gs_blend_state_pop();
@@ -678,7 +1202,11 @@ void OBSBasicInteraction::DrawPreview(void *data, uint32_t cx, uint32_t cy)
 
 	gs_ortho(0.0f, float(sourceCX), 0.0f, float(sourceCY), -100.0f, 100.0f);
 	gs_set_viewport(x, y, newCX, newCY);
+	DrawVspaceGrid(window->source, sourceCX, sourceCY);
+	DrawVspaceBoundingBox(window->source, sourceCX, sourceCY);
+	SetVspaceInspectRenderMode(window->source, true);
 	obs_source_video_render(window->source);
+	SetVspaceInspectRenderMode(window->source, false);
 	DrawVspaceGizmo(window->source, x, y, newCX, newCY);
 
 	gs_set_linear_srgb(previous);

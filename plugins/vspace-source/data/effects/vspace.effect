@@ -24,6 +24,7 @@
 ******************************************************************************/
 
 uniform texture2d effect_base_color_param;
+uniform texture2d image;
 uniform float4x4 ViewProj;
 uniform float3 effect_camera_position = {0.0, 0.0, -3.0};
 uniform float4 effect_solid_base_color = {0.36, 0.36, 0.38, 1.0};
@@ -34,6 +35,20 @@ uniform float effect_ambient_strength = 0.32;
 uniform float effect_diffuse_strength = 0.82;
 uniform float effect_specular_strength = 0.28;
 uniform float effect_shininess = 24.0;
+uniform float3 effect_grid_forward = {0.0, 1.0, 0.0};
+uniform float3 effect_grid_right = {1.0, 0.0, 0.0};
+uniform float3 effect_grid_up = {0.0, 0.0, 1.0};
+uniform float effect_grid_tan_half_fov = 0.4663077;
+uniform float effect_grid_aspect = 1.7777778;
+uniform float effect_grid_step = 1.0;
+uniform float2 effect_grid_origin = {0.0, 0.0};
+uniform float effect_grid_extent = 64.0;
+uniform float4 effect_grid_color = {0.56, 0.56, 0.56, 0.24};
+uniform float4 effect_grid_x_axis_color = {0.95, 0.32, 0.32, 0.92};
+uniform float4 effect_grid_y_axis_color = {0.36, 0.88, 0.38, 0.92};
+uniform float effect_grid_line_width = 0.25;
+uniform float effect_grid_axis_width = 1.8;
+uniform float effect_background_alpha = 1.0;
 
 sampler_state linear_sampler {
 	Filter = Linear;
@@ -54,6 +69,10 @@ struct VertDataWire {
 	float4 bary : TEXCOORD1;
 };
 
+struct VertDataGrid {
+	float4 pos : POSITION;
+};
+
 struct VertDataOut {
 	float4 pos : POSITION;
 	float3 world_pos : TEXCOORD1;
@@ -67,6 +86,16 @@ struct WireDataOut {
 	float3 normal : TEXCOORD2;
 	float2 uv : TEXCOORD0;
 	float3 bary : TEXCOORD3;
+};
+
+struct GridDataOut {
+	float4 pos : POSITION;
+	float2 ndc : TEXCOORD0;
+};
+
+struct VertInOut {
+	float4 pos : POSITION;
+	float2 uv : TEXCOORD0;
 };
 
 VertDataOut VSDefault(VertDataFill v)
@@ -87,6 +116,22 @@ WireDataOut VSWireframe(VertDataWire v)
 	v_out.uv = v.uv;
 	v_out.bary = v.bary.xyz;
 	v_out.pos = mul(float4(v.pos.xyz, 1.0), ViewProj);
+	return v_out;
+}
+
+GridDataOut VSGrid(VertDataGrid v)
+{
+	GridDataOut v_out;
+	v_out.pos = float4(v.pos.xy, 0.0, 1.0);
+	v_out.ndc = v.pos.xy;
+	return v_out;
+}
+
+VertInOut VSComposite(VertInOut v)
+{
+	VertInOut v_out;
+	v_out.pos = mul(float4(v.pos.xyz, 1.0), ViewProj);
+	v_out.uv = v.uv;
 	return v_out;
 }
 
@@ -135,12 +180,105 @@ float4 PSWireframe(WireDataOut v) : TARGET
 	return float4(effect_wireframe_color.rgb, alpha);
 }
 
+float grid_axis_alpha(float dist, float width_px)
+{
+	float fw = max(fwidth(dist), 1e-6f);
+	float dist_px = abs(dist) / fw;
+	return 1.0f - smoothstep(width_px, width_px + 1.0f, dist_px);
+}
+
+float4 PSGrid(GridDataOut v) : TARGET
+{
+	float step_value = max(effect_grid_step, 1e-5f);
+	float extent_value = max(effect_grid_extent, step_value);
+	float3 forward = normalize(effect_grid_forward);
+	float3 right = normalize(effect_grid_right);
+	float3 up = normalize(effect_grid_up);
+	float3 ray_dir;
+	float denom;
+	float t;
+	float3 hit;
+	float2 local;
+	float2 grid_uv;
+	float2 grid_uv_fw;
+	float2 grid_dist;
+	float grid_alpha;
+	float axis_x_alpha;
+	float axis_y_alpha;
+	float4 color;
+
+	ray_dir = normalize(forward + right * (v.ndc.x * effect_grid_aspect * effect_grid_tan_half_fov) +
+			    up * (v.ndc.y * effect_grid_tan_half_fov));
+	denom = ray_dir.z;
+
+	if (abs(denom) < 1e-6f)
+		discard;
+
+	t = -effect_camera_position.z / denom;
+	if (t <= 0.0f)
+		discard;
+
+	hit = effect_camera_position + ray_dir * t;
+	local = hit.xy - effect_grid_origin;
+	if (abs(local.x) > extent_value || abs(local.y) > extent_value)
+		discard;
+
+	grid_uv = local / step_value;
+	grid_uv_fw = max(fwidth(grid_uv), float2(1e-6f, 1e-6f));
+	grid_dist = abs(frac(grid_uv - 0.5f) - 0.5f) / grid_uv_fw;
+	grid_alpha = 1.0f - smoothstep(effect_grid_line_width, effect_grid_line_width + 1.0f,
+				       min(grid_dist.x, grid_dist.y));
+
+	axis_x_alpha = grid_axis_alpha(hit.y, effect_grid_axis_width);
+	axis_y_alpha = grid_axis_alpha(hit.x, effect_grid_axis_width);
+
+	color = float4(effect_grid_color.rgb, effect_grid_color.a * grid_alpha);
+	color = lerp(color, effect_grid_y_axis_color, axis_y_alpha);
+	color = lerp(color, effect_grid_x_axis_color, axis_x_alpha);
+
+	if (color.a < 0.001f)
+		discard;
+
+	return color;
+}
+
+float4 PSComposite(VertInOut v) : TARGET
+{
+	float4 rgba = image.Sample(linear_sampler, v.uv);
+	float bg_alpha = saturate(effect_background_alpha);
+
+	if (rgba.a > bg_alpha + 0.001f)
+		rgba.a = 1.0f;
+	else
+		rgba.a = bg_alpha;
+
+	return rgba;
+}
+
 technique DrawBlinnPhongWireframe
 {
 	pass
 	{
 		vertex_shader = VSDefault(v);
 		pixel_shader = PSBlinnPhongWireframe(v);
+	}
+}
+
+technique DrawGrid
+{
+	pass
+	{
+		vertex_shader = VSGrid(v);
+		pixel_shader = PSGrid(v);
+	}
+}
+
+technique DrawComposite
+{
+	pass
+	{
+		vertex_shader = VSComposite(v);
+		pixel_shader = PSComposite(v);
 	}
 }
 

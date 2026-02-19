@@ -43,6 +43,7 @@
 #define S_MODEL_PATH "model_path"
 #define S_DRACO_ENABLED "draco_enabled"
 #define S_DRACO_DECODER "draco_decoder"
+#define S_BACKGROUND_COLOR "background_color"
 #define S_DRACO_DECODER_AUTO "auto"
 #define S_DRACO_DECODER_BUILTIN "builtin"
 #define S_DRACO_DECODER_EXTERNAL "external"
@@ -81,11 +82,22 @@ struct vspace_source {
 	gs_eparam_t *effect_diffuse_strength_param;
 	gs_eparam_t *effect_specular_strength_param;
 	gs_eparam_t *effect_shininess_param;
+	gs_eparam_t *effect_grid_forward_param;
+	gs_eparam_t *effect_grid_right_param;
+	gs_eparam_t *effect_grid_up_param;
+	gs_eparam_t *effect_grid_tan_half_fov_param;
+	gs_eparam_t *effect_grid_aspect_param;
+	gs_eparam_t *effect_grid_step_param;
+	gs_eparam_t *effect_grid_origin_param;
+	gs_eparam_t *effect_grid_extent_param;
+	gs_eparam_t *effect_composite_image_param;
+	gs_eparam_t *effect_composite_background_alpha_param;
 	char *model_path;
 	char *draco_decoder;
 	struct vspace_gpu_mesh *gpu_meshes;
 	size_t gpu_mesh_count;
 	gs_vertbuffer_t *bounds_line_buffer;
+	gs_vertbuffer_t *grid_triangle_buffer;
 	gs_texrender_t *model_texrender;
 	gs_image_file4_t base_color_image;
 	size_t draw_vertex_count;
@@ -129,6 +141,7 @@ struct vspace_source {
 	bool diagnostics_logged_draw;
 	uint32_t width;
 	uint32_t height;
+	uint32_t background_color;
 	struct vec3 model_bounds_min;
 	struct vec3 model_bounds_max;
 	struct vec3 camera_target;
@@ -145,6 +158,7 @@ struct vspace_source {
 	float default_light_shininess;
 	bool model_bounds_valid;
 	bool default_camera_valid;
+	volatile bool inspect_render_mode;
 	bool camera_manual_override;
 	bool camera_drag_orbit;
 	bool camera_drag_pan;
@@ -175,6 +189,16 @@ static inline void vspace_source_unlock_camera(struct vspace_source *context)
 {
 	if (context && context->camera_mutex_valid)
 		pthread_mutex_unlock(&context->camera_mutex);
+}
+
+static bool vspace_source_nullable_streq(const char *a, const char *b)
+{
+	if (!a)
+		a = "";
+	if (!b)
+		b = "";
+
+	return strcmp(a, b) == 0;
 }
 
 static float vspace_source_model_extent_locked(const struct vspace_source *context)
@@ -422,7 +446,11 @@ static void vspace_source_apply_camera_projection_matrix(float fov_deg, float as
 	xmin = ymin * aspect;
 	xmax = ymax * aspect;
 
-	gs_frustum(xmin, xmax, ymin, ymax, znear, zfar);
+	/*
+	 * OBS frustum parameter order is (left, right, top, bottom).
+	 * Keep top/bottom swapped here to avoid vertical inversion in this path.
+	 */
+	gs_frustum(xmin, xmax, ymax, ymin, znear, zfar);
 }
 
 static bool vspace_source_should_auto_fit_camera(struct vspace_source *context)
@@ -568,7 +596,8 @@ static void vspace_source_orbit_camera(struct vspace_source *context, int32_t de
 	context->camera_orbit_pitch_axis = stable_right;
 	context->camera_orbit_pitch_axis_valid = true;
 
-	vspace_source_rotate_vec3_axis_angle(&orbit_offset, &orbit_offset, &stable_right, (float)delta_y * sensitivity);
+	/* Invert vertical drag direction for pitch only. */
+	vspace_source_rotate_vec3_axis_angle(&orbit_offset, &orbit_offset, &stable_right, -(float)delta_y * sensitivity);
 
 	vec3_add(&context->default_camera_position, &context->camera_target, &orbit_offset);
 	context->camera_orbit_distance = vec3_len(&orbit_offset);
@@ -988,6 +1017,16 @@ static void vspace_source_unload_effect(struct vspace_source *context)
 	context->effect_diffuse_strength_param = NULL;
 	context->effect_specular_strength_param = NULL;
 	context->effect_shininess_param = NULL;
+	context->effect_grid_forward_param = NULL;
+	context->effect_grid_right_param = NULL;
+	context->effect_grid_up_param = NULL;
+	context->effect_grid_tan_half_fov_param = NULL;
+	context->effect_grid_aspect_param = NULL;
+	context->effect_grid_step_param = NULL;
+	context->effect_grid_origin_param = NULL;
+	context->effect_grid_extent_param = NULL;
+	context->effect_composite_image_param = NULL;
+	context->effect_composite_background_alpha_param = NULL;
 }
 
 static void vspace_source_load_effect(struct vspace_source *context)
@@ -1012,6 +1051,8 @@ static void vspace_source_load_effect(struct vspace_source *context)
 	if (context->effect) {
 		gs_technique_t *fill_tech = gs_effect_get_technique(context->effect, "DrawBlinnPhongWireframe");
 		gs_technique_t *wire_tech = gs_effect_get_technique(context->effect, "DrawWireframe");
+		gs_technique_t *grid_tech = gs_effect_get_technique(context->effect, "DrawGrid");
+		gs_technique_t *composite_tech = gs_effect_get_technique(context->effect, "DrawComposite");
 
 		context->effect_base_color_param = gs_effect_get_param_by_name(context->effect, "effect_base_color_param");
 		context->effect_camera_position_param =
@@ -1025,14 +1066,26 @@ static void vspace_source_load_effect(struct vspace_source *context)
 		context->effect_specular_strength_param =
 			gs_effect_get_param_by_name(context->effect, "effect_specular_strength");
 		context->effect_shininess_param = gs_effect_get_param_by_name(context->effect, "effect_shininess");
+		context->effect_grid_forward_param = gs_effect_get_param_by_name(context->effect, "effect_grid_forward");
+		context->effect_grid_right_param = gs_effect_get_param_by_name(context->effect, "effect_grid_right");
+		context->effect_grid_up_param = gs_effect_get_param_by_name(context->effect, "effect_grid_up");
+		context->effect_grid_tan_half_fov_param =
+			gs_effect_get_param_by_name(context->effect, "effect_grid_tan_half_fov");
+		context->effect_grid_aspect_param = gs_effect_get_param_by_name(context->effect, "effect_grid_aspect");
+		context->effect_grid_step_param = gs_effect_get_param_by_name(context->effect, "effect_grid_step");
+		context->effect_grid_origin_param = gs_effect_get_param_by_name(context->effect, "effect_grid_origin");
+		context->effect_grid_extent_param = gs_effect_get_param_by_name(context->effect, "effect_grid_extent");
+		context->effect_composite_image_param = gs_effect_get_param_by_name(context->effect, "image");
+		context->effect_composite_background_alpha_param =
+			gs_effect_get_param_by_name(context->effect, "effect_background_alpha");
 
 		blog(LOG_INFO,
 		     "[vspace-source: '%s'] Effect loaded: base_color_param=%s, camera_param=%s, "
-		     "light_dir_param=%s, tech_fill=%s, tech_wire=%s",
+		     "light_dir_param=%s, tech_fill=%s, tech_wire=%s, tech_grid=%s, tech_composite=%s",
 		     vspace_source_log_name(context), context->effect_base_color_param ? "yes" : "no",
 		     context->effect_camera_position_param ? "yes" : "no",
 		     context->effect_light_direction_param ? "yes" : "no", fill_tech ? "yes" : "no",
-		     wire_tech ? "yes" : "no");
+		     wire_tech ? "yes" : "no", grid_tech ? "yes" : "no", composite_tech ? "yes" : "no");
 	}
 	obs_leave_graphics();
 
@@ -1216,6 +1269,11 @@ static void vspace_source_release_gpu_resources(struct vspace_source *context)
 		context->bounds_line_buffer = NULL;
 	}
 
+	if (context->grid_triangle_buffer) {
+		gs_vertexbuffer_destroy(context->grid_triangle_buffer);
+		context->grid_triangle_buffer = NULL;
+	}
+
 	if (context->model_texrender) {
 		gs_texrender_destroy(context->model_texrender);
 		context->model_texrender = NULL;
@@ -1352,6 +1410,50 @@ static float vspace_source_snap_grid_step_125(float raw_step)
 	return normalized * magnitude;
 }
 
+/* Must be called in an active graphics context. */
+static bool vspace_source_ensure_grid_triangle_buffer(struct vspace_source *context)
+{
+	struct gs_vb_data *vb_data;
+
+	if (!context)
+		return false;
+
+	if (context->grid_triangle_buffer)
+		return true;
+
+	vb_data = gs_vbdata_create();
+	if (!vb_data)
+		return false;
+
+	vb_data->num = 3;
+	vb_data->points = bmalloc(sizeof(struct vec3) * 3);
+	vb_data->num_tex = 0;
+	vb_data->tvarray = NULL;
+	vb_data->normals = NULL;
+	vb_data->tangents = NULL;
+	vb_data->colors = NULL;
+
+	if (!vb_data->points) {
+		gs_vbdata_destroy(vb_data);
+		return false;
+	}
+
+	/* Full-screen triangle in clip-space. */
+	vec3_set(vb_data->points + 0, -1.0f, -1.0f, 0.0f);
+	vec3_set(vb_data->points + 1, -1.0f, 3.0f, 0.0f);
+	vec3_set(vb_data->points + 2, 3.0f, -1.0f, 0.0f);
+
+	context->grid_triangle_buffer = gs_vertexbuffer_create(vb_data, 0);
+	if (!context->grid_triangle_buffer) {
+		gs_vbdata_destroy(vb_data);
+		blog(LOG_WARNING, "[vspace-source: '%s'] Failed to create fullscreen grid triangle buffer.",
+		     vspace_source_log_name(context));
+		return false;
+	}
+
+	return true;
+}
+
 static void vspace_source_draw_grid_line_parallel_x(float y, float extent, float half_width)
 {
 	gs_render_start(false);
@@ -1430,15 +1532,14 @@ static uint32_t vspace_source_get_aa_dim(uint32_t base_dim)
 	return (uint32_t)scaled;
 }
 
-static void vspace_source_draw_world_grid(const struct vspace_source *context, const struct vec3 *camera_position,
-					  const struct vec3 *camera_target, float camera_fov_deg,
+static void vspace_source_draw_world_grid(struct vspace_source *context, const struct vec3 *camera_position,
+					  const struct vec3 *camera_target, const struct vec3 *camera_up,
+					  float camera_fov_deg,
 					  uint32_t viewport_width_px, uint32_t viewport_height_px)
 {
-	gs_effect_t *solid_effect;
-	gs_eparam_t *color_param;
-	struct vec4 x_axis_color;
-	struct vec4 y_axis_color;
-	struct vec4 grid_color;
+	struct vec3 forward;
+	struct vec3 right;
+	struct vec3 up;
 	struct vec3 camera_to_target;
 	float camera_distance;
 	float base_step;
@@ -1450,17 +1551,17 @@ static void vspace_source_draw_world_grid(const struct vspace_source *context, c
 	float view_height_world;
 	float units_per_pixel;
 	float required_extent;
-	float snapped_origin_x;
-	float snapped_origin_y;
-	float line_half_width;
-	float axis_half_width;
+	struct vec2 snapped_origin;
+	gs_technique_t *grid_tech;
 
-	if (!context || !camera_position || !camera_target)
+	if (!context || !context->effect || !camera_position || !camera_target || !camera_up)
 		return;
 
-	solid_effect = obs_get_base_effect(OBS_EFFECT_SOLID);
-	color_param = solid_effect ? gs_effect_get_param_by_name(solid_effect, "color") : NULL;
-	if (!solid_effect || !color_param)
+	if (!vspace_source_ensure_grid_triangle_buffer(context))
+		return;
+
+	grid_tech = gs_effect_get_technique(context->effect, "DrawGrid");
+	if (!grid_tech)
 		return;
 
 	vec3_sub(&camera_to_target, camera_position, camera_target);
@@ -1486,36 +1587,67 @@ static void vspace_source_draw_world_grid(const struct vspace_source *context, c
 
 	base_step = vspace_source_snap_grid_step_125(units_per_pixel * VSPACE_GRID_TARGET_PIXEL_STEP);
 	grid_step = fmaxf(base_step, VSPACE_GRID_MIN_STEP);
-	snapped_origin_x = roundf(camera_target->x / grid_step) * grid_step;
-	snapped_origin_y = roundf(camera_target->y / grid_step) * grid_step;
+	vec2_set(&snapped_origin, roundf(camera_target->x / grid_step) * grid_step,
+		 roundf(camera_target->y / grid_step) * grid_step);
 
 	required_extent = fmaxf(camera_distance * 6.0f, fmaxf(view_height_world, view_height_world * aspect) * 1.2f);
 	if (!isfinite(required_extent) || required_extent < 16.0f)
 		required_extent = 16.0f;
 
-	axis_half_width = fmaxf(units_per_pixel * 1.5f, 0.0008f);
-	line_half_width = fmaxf(units_per_pixel * 0.55f, 0.0005f);
+	vec3_sub(&forward, camera_target, camera_position);
+	if (vec3_len(&forward) <= 0.0001f)
+		vec3_set(&forward, 0.0f, 1.0f, 0.0f);
+	else
+		vec3_norm(&forward, &forward);
 
-	vec4_set(&x_axis_color, 0.95f, 0.32f, 0.32f, 0.92f);
-	vec4_set(&y_axis_color, 0.36f, 0.88f, 0.38f, 0.92f);
-	vec4_set(&grid_color, 0.56f, 0.56f, 0.56f, 0.24f);
+	up = *camera_up;
+	if (vec3_len(&up) <= 0.0001f)
+		vec3_set(&up, 0.0f, 0.0f, 1.0f);
+	else
+		vec3_norm(&up, &up);
 
-	gs_blend_state_push();
-	gs_enable_blending(true);
-	gs_blend_function(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA);
+	vec3_cross(&right, &forward, &up);
+	if (vec3_len(&right) <= 0.0001f) {
+		vec3_set(&up, 0.0f, 0.0f, 1.0f);
+		vec3_cross(&right, &forward, &up);
+	}
+	if (vec3_len(&right) <= 0.0001f) {
+		vec3_set(&up, 0.0f, 1.0f, 0.0f);
+		vec3_cross(&right, &forward, &up);
+	}
+	if (vec3_len(&right) <= 0.0001f)
+		vec3_set(&right, 1.0f, 0.0f, 0.0f);
+	else
+		vec3_norm(&right, &right);
 
-	/* Draw a single snapped grid level so spacing stays uniform and less dense. */
-	vspace_source_draw_grid_iteration(solid_effect, color_param, grid_step, required_extent, snapped_origin_x,
-					  snapped_origin_y, line_half_width, &grid_color);
+	vec3_cross(&up, &right, &forward);
+	if (vec3_len(&up) <= 0.0001f)
+		vec3_set(&up, 0.0f, 0.0f, 1.0f);
+	else
+		vec3_norm(&up, &up);
 
-	gs_effect_set_vec4(color_param, &y_axis_color);
-	while (gs_effect_loop(solid_effect, "Solid"))
-		vspace_source_draw_grid_line_parallel_z(0.0f, required_extent, axis_half_width);
-	gs_effect_set_vec4(color_param, &x_axis_color);
-	while (gs_effect_loop(solid_effect, "Solid"))
-		vspace_source_draw_grid_line_parallel_x(0.0f, required_extent, axis_half_width);
+	if (context->effect_grid_forward_param)
+		gs_effect_set_vec3(context->effect_grid_forward_param, &forward);
+	if (context->effect_grid_right_param)
+		gs_effect_set_vec3(context->effect_grid_right_param, &right);
+	if (context->effect_grid_up_param)
+		gs_effect_set_vec3(context->effect_grid_up_param, &up);
+	if (context->effect_grid_tan_half_fov_param)
+		gs_effect_set_float(context->effect_grid_tan_half_fov_param, tan_half_fov);
+	if (context->effect_grid_aspect_param)
+		gs_effect_set_float(context->effect_grid_aspect_param, aspect);
+	if (context->effect_grid_step_param)
+		gs_effect_set_float(context->effect_grid_step_param, grid_step);
+	if (context->effect_grid_origin_param)
+		gs_effect_set_vec2(context->effect_grid_origin_param, &snapped_origin);
+	if (context->effect_grid_extent_param)
+		gs_effect_set_float(context->effect_grid_extent_param, required_extent);
 
-	gs_blend_state_pop();
+	gs_load_vertexbuffer(context->grid_triangle_buffer);
+	gs_load_indexbuffer(NULL);
+	while (gs_effect_loop(context->effect, "DrawGrid"))
+		gs_draw(GS_TRIS, 0, 3);
+	gs_load_vertexbuffer(NULL);
 }
 
 /* Must be called in an active graphics context. */
@@ -1551,6 +1683,7 @@ static gs_texture_t *vspace_source_render_model_to_texture(struct vspace_source 
 	uint32_t render_width;
 	uint32_t render_height;
 	bool camera_valid = false;
+	const bool inspect_render_mode = os_atomic_load_bool(&context->inspect_render_mode);
 	const char *fill_technique = "DrawBlinnPhongWireframe";
 	const char *wireframe_technique = "DrawWireframe";
 	enum gs_cull_mode previous_cull_mode;
@@ -1593,7 +1726,10 @@ static gs_texture_t *vspace_source_render_model_to_texture(struct vspace_source 
 	}
 
 	aspect = (float)render_width / (float)(render_height ? render_height : 1);
-	vec4_from_rgba_srgb(&clear_color, 0xFF101010);
+	vec4_from_rgba_srgb(&clear_color, inspect_render_mode ? 0x00000000 : context->background_color);
+	clear_color.x *= clear_color.w;
+	clear_color.y *= clear_color.w;
+	clear_color.z *= clear_color.w;
 	gs_clear(GS_CLEAR_COLOR | GS_CLEAR_DEPTH, &clear_color, 1.0f, 0);
 
 	gs_enable_framebuffer_srgb(true);
@@ -1626,11 +1762,6 @@ static gs_texture_t *vspace_source_render_model_to_texture(struct vspace_source 
 	previous_cull_mode = gs_get_cull_mode();
 	gs_blend_state_push();
 	gs_enable_blending(false);
-
-	/* Grid is screen-overlay style; keep culling disabled for quad strips. */
-	gs_set_cull_mode(GS_NEITHER);
-	vspace_source_draw_world_grid(context, &camera_position, &camera_target, camera_fov_deg, render_width,
-				      render_height);
 
 	/* Keep mesh winding-agnostic; depth test handles visibility. */
 	gs_set_cull_mode(GS_NEITHER);
@@ -1666,9 +1797,6 @@ static gs_texture_t *vspace_source_render_model_to_texture(struct vspace_source 
 	gs_load_indexbuffer(NULL);
 	gs_load_vertexbuffer(NULL);
 	gs_set_cull_mode(previous_cull_mode);
-
-	if (context->model_bounds_valid)
-		vspace_source_draw_bounds(context);
 
 	gs_blend_state_pop();
 	gs_matrix_pop();
@@ -2897,27 +3025,84 @@ static void vspace_source_get_camera_state_proc(void *data, calldata_t *params)
 	calldata_set_float(params, "zfar", zfar);
 }
 
+static void vspace_source_get_model_bounds_proc(void *data, calldata_t *params)
+{
+	struct vspace_source *context = data;
+	struct vec3 bounds_min;
+	struct vec3 bounds_max;
+	bool available = false;
+
+	if (!params)
+		return;
+
+	vec3_zero(&bounds_min);
+	vec3_zero(&bounds_max);
+
+	if (context) {
+		vspace_source_lock_camera(context);
+		if (context->model_bounds_valid) {
+			bounds_min = context->model_bounds_min;
+			bounds_max = context->model_bounds_max;
+			available = true;
+		}
+		vspace_source_unlock_camera(context);
+	}
+
+	calldata_set_bool(params, "available", available);
+	calldata_set_float(params, "min_x", bounds_min.x);
+	calldata_set_float(params, "min_y", bounds_min.y);
+	calldata_set_float(params, "min_z", bounds_min.z);
+	calldata_set_float(params, "max_x", bounds_max.x);
+	calldata_set_float(params, "max_y", bounds_max.y);
+	calldata_set_float(params, "max_z", bounds_max.z);
+}
+
+static void vspace_source_set_inspect_render_mode_proc(void *data, calldata_t *params)
+{
+	struct vspace_source *context = data;
+	bool enabled;
+
+	if (!context || !params)
+		return;
+
+	enabled = calldata_bool(params, "enabled");
+	os_atomic_store_bool(&context->inspect_render_mode, enabled);
+}
+
 static void vspace_source_defaults(obs_data_t *settings)
 {
 	obs_data_set_default_string(settings, S_MODEL_PATH, "");
 	obs_data_set_default_bool(settings, S_DRACO_ENABLED, true);
 	obs_data_set_default_string(settings, S_DRACO_DECODER, S_DRACO_DECODER_AUTO);
+	obs_data_set_default_int(settings, S_BACKGROUND_COLOR, 0xFF101010);
 }
 
 static void vspace_source_update(void *data, obs_data_t *settings)
 {
 	struct vspace_source *context = data;
-	const char *model_path = obs_data_get_string(settings, S_MODEL_PATH);
-	const char *draco_decoder = obs_data_get_string(settings, S_DRACO_DECODER);
+	const char *model_path_raw = obs_data_get_string(settings, S_MODEL_PATH);
+	const char *draco_decoder_raw = obs_data_get_string(settings, S_DRACO_DECODER);
+	const char *new_model_path = (model_path_raw && *model_path_raw) ? model_path_raw : NULL;
+	const bool new_draco_enabled = obs_data_get_bool(settings, S_DRACO_ENABLED);
+	const char *new_draco_decoder =
+		(draco_decoder_raw && *draco_decoder_raw) ? draco_decoder_raw : S_DRACO_DECODER_AUTO;
+	const bool model_path_changed = !vspace_source_nullable_streq(context->model_path, new_model_path);
+	const bool draco_enabled_changed = context->draco_enabled != new_draco_enabled;
+	const bool draco_decoder_changed = !vspace_source_nullable_streq(context->draco_decoder, new_draco_decoder);
+	const bool requires_reload = model_path_changed || draco_enabled_changed || draco_decoder_changed;
 
-	bfree(context->model_path);
-	context->model_path = (model_path && *model_path) ? bstrdup(model_path) : NULL;
+	if (model_path_changed) {
+		bfree(context->model_path);
+		context->model_path = new_model_path ? bstrdup(new_model_path) : NULL;
+	}
 
-	context->draco_enabled = obs_data_get_bool(settings, S_DRACO_ENABLED);
+	context->draco_enabled = new_draco_enabled;
+	context->background_color = (uint32_t)obs_data_get_int(settings, S_BACKGROUND_COLOR);
 
-	bfree(context->draco_decoder);
-	context->draco_decoder =
-		(draco_decoder && *draco_decoder) ? bstrdup(draco_decoder) : bstrdup(S_DRACO_DECODER_AUTO);
+	if (draco_decoder_changed) {
+		bfree(context->draco_decoder);
+		context->draco_decoder = bstrdup(new_draco_decoder);
+	}
 
 	vspace_source_validate_model_path(context);
 
@@ -2927,9 +3112,11 @@ static void vspace_source_update(void *data, obs_data_t *settings)
 		     vspace_source_log_name(context));
 	}
 
-	context->diagnostics_logged_upload = false;
-	context->diagnostics_logged_draw = false;
-	vspace_source_queue_load_job(context);
+	if (requires_reload) {
+		context->diagnostics_logged_upload = false;
+		context->diagnostics_logged_draw = false;
+		vspace_source_queue_load_job(context);
+	}
 	vspace_source_refresh_size(context);
 }
 
@@ -2944,6 +3131,7 @@ static obs_properties_t *vspace_source_properties(void *data)
 	model_path = obs_properties_add_path(props, S_MODEL_PATH, obs_module_text("Vspace.ModelFile"), OBS_PATH_FILE,
 					     obs_module_text("Vspace.ModelFile.Filter"), NULL);
 	obs_property_set_modified_callback(model_path, vspace_source_model_path_modified);
+	obs_properties_add_color_alpha(props, S_BACKGROUND_COLOR, obs_module_text("Vspace.BackgroundColor"));
 	obs_properties_add_bool(props, S_DRACO_ENABLED, obs_module_text("Vspace.Draco.Enable"));
 
 	draco_decoder = obs_properties_add_list(props, S_DRACO_DECODER, obs_module_text("Vspace.Draco.Decoder"),
@@ -2987,6 +3175,14 @@ static void *vspace_source_create(obs_data_t *settings, obs_source_t *source)
 				 "out float up_x, out float up_y, out float up_z, "
 				 "out float fov_deg, out float znear, out float zfar)",
 				 vspace_source_get_camera_state_proc, context);
+		proc_handler_add(proc_handler,
+				 "void get_vspace_model_bounds("
+				 "out bool available, "
+				 "out float min_x, out float min_y, out float min_z, "
+				 "out float max_x, out float max_y, out float max_z)",
+				 vspace_source_get_model_bounds_proc, context);
+		proc_handler_add(proc_handler, "void set_vspace_inspect_render_mode(bool enabled)",
+				 vspace_source_set_inspect_render_mode_proc, context);
 	}
 
 	pthread_mutex_init_value(&context->camera_mutex);
@@ -3095,6 +3291,8 @@ static void vspace_source_render(void *data, gs_effect_t *effect)
 	struct vspace_source *context = data;
 	gs_texture_t *model_texture = NULL;
 	bool rendered = false;
+	const bool inspect_render_mode = os_atomic_load_bool(&context->inspect_render_mode);
+	const bool opaque_background = !inspect_render_mode && ((context->background_color >> 24) == 0xFF);
 	const bool previous_srgb = gs_framebuffer_srgb_enabled();
 
 	UNUSED_PARAMETER(effect);
@@ -3108,18 +3306,33 @@ static void vspace_source_render(void *data, gs_effect_t *effect)
 	/* BaseColor is sampled as sRGB and shaded in linear space before output. */
 	gs_enable_framebuffer_srgb(true);
 	gs_blend_state_push();
-	gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
+	if (opaque_background)
+		gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
+	else
+		gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
 
 	model_texture = vspace_source_render_model_to_texture(context);
 	if (model_texture) {
-		gs_effect_t *default_effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
-		gs_eparam_t *image_param = default_effect ? gs_effect_get_param_by_name(default_effect, "image") : NULL;
+		const float background_alpha = inspect_render_mode ? 0.0f : (float)((context->background_color >> 24) & 0xFF) / 255.0f;
 
-		if (default_effect && image_param) {
-			gs_effect_set_texture_srgb(image_param, model_texture);
-			while (gs_effect_loop(default_effect, "Draw"))
+		if (context->effect && context->effect_composite_image_param && context->effect_composite_background_alpha_param) {
+			gs_effect_set_texture_srgb(context->effect_composite_image_param, model_texture);
+			gs_effect_set_float(context->effect_composite_background_alpha_param, background_alpha);
+			while (gs_effect_loop(context->effect, "DrawComposite"))
 				gs_draw_sprite(model_texture, 0, context->width, context->height);
 			rendered = true;
+		}
+
+		if (!rendered) {
+			gs_effect_t *default_effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
+			gs_eparam_t *image_param = default_effect ? gs_effect_get_param_by_name(default_effect, "image") : NULL;
+
+			if (default_effect && image_param) {
+				gs_effect_set_texture_srgb(image_param, model_texture);
+				while (gs_effect_loop(default_effect, "Draw"))
+					gs_draw_sprite(model_texture, 0, context->width, context->height);
+				rendered = true;
+			}
 		}
 	}
 
@@ -3130,7 +3343,10 @@ static void vspace_source_render(void *data, gs_effect_t *effect)
 		struct vec4 placeholder_color;
 
 		if (solid && color) {
-			vec4_from_rgba_srgb(&placeholder_color, 0xFF2D313A);
+			vec4_from_rgba_srgb(&placeholder_color, inspect_render_mode ? 0x00000000 : context->background_color);
+			placeholder_color.x *= placeholder_color.w;
+			placeholder_color.y *= placeholder_color.w;
+			placeholder_color.z *= placeholder_color.w;
 			gs_effect_set_vec4(color, &placeholder_color);
 
 			while (gs_effect_loop(solid, "Solid"))
